@@ -5,7 +5,7 @@ npm run flow -- <comando> [opciones]     # sin compilar, desde la carpeta de hec
 hector-flow <comando> [opciones]         # tras npm run build && npm link
 ```
 
-Comandos: `check`, `run`, `distill`, `clean`, `skills`.
+Comandos: `check`, `run`, `distill`, `clean`, `skills`, `start`, `status`, `approve`, `reject`, `requeue`, `memory`.
 
 Las rutas relativas de `--repo`, `--ticket` y `--config` se resuelven desde la carpeta **donde escribiste el comando**, también con `npm run flow` (que internamente cambia a la carpeta de hector-flow; se usa la variable `INIT_CWD` que npm define con la carpeta original). Las rutas con `~` las expande tu shell.
 
@@ -145,6 +145,32 @@ npm run flow -- skills --repo <ruta> eject <paso…|all>
 
 Guía completa: [13-skills.md](13-skills.md).
 
+## `start`, `status`, `approve`, `reject`, `requeue`
+
+El bucle continuo y la revisión de sus tickets. Referencia completa en [15-backlog-y-bucle.md](15-backlog-y-bucle.md#comandos).
+
+```bash
+npm run flow -- start   --repo <ruta> [--mode manual|supervised|auto] [--once] [--max <n>]
+npm run flow -- status  --repo <ruta>
+npm run flow -- approve --repo <ruta> <ID>
+npm run flow -- reject  --repo <ruta> <ID> [--reason <texto>]
+npm run flow -- requeue --repo <ruta> <ID>
+```
+
+El ID también se puede pasar con `--ticket-id`.
+
+## `memory`
+
+```bash
+npm run flow -- memory --repo <ruta> [list [--all] | search <palabras…> | forget <id…>]
+```
+
+- `list` (por defecto): memorias validadas; `--all` incluye las provisionales.
+- `search`: las 10 más relevantes para las palabras dadas.
+- `forget`: borra entradas por id.
+
+Ver [14-memoria-y-mcp.md](14-memoria-y-mcp.md).
+
 ## Scripts de npm
 
 | Script | Qué hace |
@@ -155,4 +181,5 @@ Guía completa: [13-skills.md](13-skills.md).
 | `npm test` | Todas las pruebas, sin llamadas al modelo |
 | `npm run test:e2e` | Solo el e2e |
 | `npm run test:tutorial` | Solo el recorrido del tutorial |
+| `npm run test:loop` | Solo memoria, MCP, adaptadores y bucle |
 | `npm run build` | Compila a `dist/` |

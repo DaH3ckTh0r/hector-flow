@@ -37,6 +37,15 @@ Invalid config at /Users/tu/mi-repo/hector-flow.config.json:
   // Seguridad
   "readDenyPaths": ["**/.env", "…"],
 
+  // Memoria y MCP
+  "memory": { "enabled": true, "search": ["…"], "save": ["…"], "injectIntoEnrich": 5 },
+  "mcpServers": { "<nombre>": { /* servidor */ } },
+  "mcpAccess": { "<rol>": ["<nombre>"] },
+
+  // Bucle continuo
+  "backlog": { "type": "folder" | "github" | "azure-devops", /* … */ },
+  "loop": { "mode": "supervised", "intervalSeconds": 60, "autoMergeRequiresNoAssumptions": true },
+
   // Límites y comportamiento
   "policy": { /* ver abajo */ },
 
@@ -238,6 +247,51 @@ Valor por defecto:
 ```
 
 Si defines `readDenyPaths`, **reemplaza** la lista completa: copia la de arriba y agrega lo tuyo. `[]` desactiva la lista (la restricción a las carpetas legibles sigue). Detalles y límites en [06-seguridad.md](06-seguridad.md).
+
+### `memory` — memoria persistente
+
+| Campo | Por defecto | Descripción |
+|---|---|---|
+| `enabled` | `true` | Activa las herramientas `memory_search` / `memory_save` y la inyección en `enrich`. |
+| `search` | `enrich`, `plan`, `testAuthor`, `coder`, `diagnose`, `review`, `lead` | Pasos que pueden buscar. |
+| `save` | `enrich`, `coder`, `diagnose` | Pasos que pueden guardar. |
+| `injectIntoEnrich` | `5` | Memorias relevantes que recibe `enrich` al empezar. `0` lo desactiva. |
+
+Guía completa: [14-memoria-y-mcp.md](14-memoria-y-mcp.md).
+
+### `mcpServers` y `mcpAccess` — servidores MCP externos
+
+`mcpServers` define servidores por nombre, con el formato de Claude Code (`command`/`args`/`env` para procesos locales; `type: "http"|"sse"` + `url`/`headers` para remotos). `mcpAccess` dice qué pasos ven cada uno; un paso sin acceso no ve el servidor. El nombre `hector` está reservado.
+
+```json
+"mcpServers": { "context7": { "type": "http", "url": "https://mcp.context7.com/mcp" } },
+"mcpAccess": { "enrich": ["context7"], "coder": ["context7"] }
+```
+
+Ver [14-memoria-y-mcp.md](14-memoria-y-mcp.md#servidores-mcp-externos-por-paso).
+
+### `backlog` — de dónde toma tickets `start`
+
+Uno de:
+
+```json
+"backlog": { "type": "folder", "path": "../tickets" }
+"backlog": { "type": "github", "repo": "acme/shop", "label": "hector", "tokenEnv": "GITHUB_TOKEN", "comment": true }
+"backlog": { "type": "azure-devops", "organization": "contoso", "project": "Integrations", "tag": "hector",
+             "states": ["New", "Approved", "Committed", "To Do", "Active"], "tokenEnv": "AZURE_DEVOPS_PAT", "comment": true }
+```
+
+Todos los campos y su comportamiento: [15-backlog-y-bucle.md](15-backlog-y-bucle.md#backlogs).
+
+### `loop` — el bucle continuo
+
+| Campo | Por defecto | Descripción |
+|---|---|---|
+| `mode` | `"supervised"` | `manual` deja las ramas; `supervised` espera `approve`/`reject`; `auto` fusiona y verifica. |
+| `intervalSeconds` | `60` (mínimo 5) | Espera entre revisiones del backlog cuando no hay nada que hacer. |
+| `autoMergeRequiresNoAssumptions` | `true` | En `auto`, un ticket con supuestos abiertos espera revisión en lugar de fusionarse. |
+
+Ver [15-backlog-y-bucle.md](15-backlog-y-bucle.md).
 
 ## `policy` — límites y comportamiento
 

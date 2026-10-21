@@ -62,6 +62,9 @@ El detalle de cada paso está en [05-flujo.md](05-flujo.md).
 | **Rol** | El tipo de agente de un paso: `enrich`, `plan`, `testAuthor`, `coder`, `diagnose`, `review`, `qaPlan`, `lead`, `distill`. Cada rol tiene sus instrucciones, su modelo y su esfuerzo. |
 | **Skill de un paso** | El `SKILL.md` con las instrucciones de un rol. Las de serie están en `skills/`; cada repo puede sobrescribirlas en `.hector/skills/`. Ver [13-skills.md](13-skills.md). |
 | **Skill de Claude Code** | Una skill que Claude carga bajo demanda (convenciones, procedimientos). Se asigna por paso con `claudeSkills` o el front-matter. |
+| **Memoria** | Conocimiento del repo (decisiones, descubrimientos, convenciones, trampas) que guardan los agentes y leen los siguientes tickets. Ver [14-memoria-y-mcp.md](14-memoria-y-mcp.md). |
+| **Backlog** | Origen de tickets para el bucle: una carpeta, GitHub Issues o Azure DevOps. |
+| **Bucle** | `start`: toma tickets del backlog uno a uno; modos `manual`, `supervised`, `auto`. Ver [15-backlog-y-bucle.md](15-backlog-y-bucle.md). |
 | **Juez** | Un revisor independiente. Con varios (`review.judges`), todos deben aprobar. |
 | **Agente** | Una sesión del Agent SDK de Claude que ejecuta un paso, con un contexto limpio y permisos acotados. Devuelve JSON validado. |
 | **Worker** | Un agente `coder` que implementa una tarea del plan, en su propio worktree. Se le recuerda para devolverle sus defectos. |

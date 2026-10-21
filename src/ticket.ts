@@ -19,29 +19,33 @@ export interface Ticket {
  *   - criterion two
  */
 export async function readTicket(path: string): Promise<Ticket> {
-  const text = await readFile(path, "utf8");
+  return parseTicket(await readFile(path, "utf8"), { fallbackId: basename(path, extname(path)), source: path });
+}
+
+/** Same rules as readTicket, for markdown that comes from somewhere else (a backlog adapter). */
+export function parseTicket(text: string, opts: { fallbackId: string; source: string }): Ticket {
   const lines = text.split(/\r?\n/);
 
   const heading = lines.find((l) => /^#\s+/.test(l));
-  if (!heading) throw new Error(`Ticket ${path} has no '# title' line`);
+  if (!heading) throw new Error(`Ticket ${opts.source} has no '# title' line`);
   const headingText = heading.replace(/^#\s+/, "").trim();
 
   const idMatch = headingText.match(/^([A-Za-z][A-Za-z0-9]*-\d+)\s*[:\-–]\s*(.+)$/);
-  const id = idMatch?.[1] ?? basename(path, extname(path));
+  const id = idMatch?.[1] ?? opts.fallbackId;
   const title = idMatch?.[2]?.trim() ?? headingText;
 
-  const acIndex = lines.findIndex((l) => /^##\s+(acceptance criteria|criterios de aceptaci[oó]n)/i.test(l));
+  const acIndex = lines.findIndex((l) => /^#{2,3}\s+(acceptance criteria|criterios de aceptaci[oó]n)/i.test(l));
   const acceptanceCriteria: string[] = [];
   if (acIndex >= 0) {
     for (const line of lines.slice(acIndex + 1)) {
-      if (/^##\s+/.test(line)) break;
-      const item = line.match(/^\s*[-*]\s+(?:\[[ x]\]\s+)?(.+)$/);
+      if (/^#{1,3}\s+/.test(line)) break;
+      const item = line.match(/^\s*[-*]\s+(?:\[[ xX]\]\s+)?(.+)$/);
       if (item?.[1]) acceptanceCriteria.push(item[1].trim());
     }
   }
   if (acceptanceCriteria.length === 0) {
     throw new Error(
-      `Ticket ${path} has no acceptance criteria. Add a '## Acceptance criteria' section with bullet points: ` +
+      `Ticket ${opts.source} has no acceptance criteria. Add a '## Acceptance criteria' section with bullet points: ` +
         `they become the locked tests, so the flow refuses to run without them.`,
     );
   }

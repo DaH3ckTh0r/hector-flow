@@ -12,7 +12,7 @@ hector-flow deja que agentes de IA editen código y ejecuten comandos sin pedir 
 | **Aislamiento por componente** | Un implementador solo escribe en la carpeta de su componente | `canUseTool` + `commitExact` |
 | **Tests bloqueados** | Nadie salvo el autor de tests escribe en `lockedPaths` | `canUseTool` + `enforceLocks` |
 | **Allowlist de comandos** | Qué puede ejecutar un agente con Bash | `isCommandAllowed` en `src/guards.ts` |
-| **Herramientas** | Sin web, sin MCP externo, sin subagentes | `disallowedTools` + `canUseTool` |
+| **Herramientas** | Sin web ni subagentes; MCP solo el propio (`ask`, memoria) y los servidores que `mcpAccess` asigna al paso | `disallowedTools` + `decide()` |
 | **Commit exacto** | Solo entra en git lo declarado y dentro del componente | `commitExact` |
 | **Worktrees** | Tus checkouts nunca se modifican | `src/tools/git.ts` |
 | **Topes** | Turnos y gasto por agente; reparaciones y preguntas por ejecución | `policy` |
@@ -25,6 +25,8 @@ hector-flow deja que agentes de IA editen código y ejecuten comandos sin pedir 
 | `Write`, `Edit`, `MultiEdit`, `NotebookEdit` | ✖ | Solo en su componente y fuera de rutas bloqueadas | Solo en los `lockedPaths` de su componente |
 | `Bash` | ✖ | Solo `allowedCommands` | Solo `allowedCommands` |
 | `ask` (MCP propio) | — | ✔ | — |
+| `memory_search` / `memory_save` (MCP propio) | Según `memory.search` / `memory.save` | Igual | Igual |
+| MCP externo (`mcpServers`) | Solo los servidores de `mcpAccess` del paso | Igual | Igual |
 | `Skill` (skills de Claude Code) | Solo si el paso tiene skills asignadas | Igual | Igual |
 | `WebFetch`, `WebSearch`, `Task`/`Agent` | ✖ | ✖ | ✖ |
 | Cualquier otra herramienta o MCP | ✖ | ✖ | ✖ |
@@ -73,6 +75,8 @@ Sé consciente de estos límites antes de usarlo en un repo con acceso a sistema
 | **Comandos permitidos** | `readDenyPaths` controla las herramientas de lectura del agente, no lo que hace por dentro un comando permitido (un test puede abrir cualquier archivo). | Contenedor, y tests que no lean secretos. |
 | **Red desde los comandos** | Un comando permitido (o un test) puede abrir conexiones. | Contenedor con red restringida si te preocupa. |
 | **`notifyCommand`** | Lo escribes tú y no pasa por la allowlist. | Mantenlo simple. |
+| **Servidores MCP externos** | Corren con tus permisos (stdio) o reciben lo que el agente les envía (http). `readDenyPaths` no se aplica dentro de ellos. | Asígnalos solo a los pasos que los necesitan (`mcpAccess`); prefiere servidores de solo lectura. |
+| **Memoria** | Los agentes escriben en ella texto libre que otros tickets leerán. | Solo se valida lo de ejecuciones `completed`; revísala con `memory list` y borra lo que no sea cierto. |
 | **Las instrucciones de `CLAUDE.md` y `.claude/`** | Con `loadProjectSettings: true` los agentes las siguen. | Revisa esos archivos, o desactiva la opción. |
 
 En resumen: los permisos de hector-flow evitan que un agente haga cosas **fuera de su tarea** (tocar otro componente, debilitar tests, ejecutar comandos arbitrarios), pero no son un sandbox del sistema operativo.
@@ -81,6 +85,7 @@ En resumen: los permisos de hector-flow evitan que un agente haga cosas **fuera 
 
 - Nunca se modifica tu checkout. Todo ocurre en worktrees bajo `workspacesDir`.
 - hector-flow **no hace push** ni abre PRs. Las ramas quedan en tus repos locales.
+- **`approve` y el modo `auto` sí modifican tus checkouts:** fusionan `hector/<ID>` en la rama base. Antes exigen que cada checkout esté en esa rama y limpio; si la fusión o la verificación posterior fallan, devuelven cada repo al commit exacto en que estaba (`git reset --hard`, seguro porque no había cambios sin commitear).
 - Los commits se hacen con `--no-verify`, así que los hooks de pre-commit no corren dentro del flujo. Si tus hooks hacen comprobaciones importantes, inclúyelas en `buildCommand` o `lintCommand`.
 - `clean` borra ramas `hector/<ID>` y `hector-tasks/<ID>/*` sin preguntar. El trabajo no fusionado ni subido se pierde.
 

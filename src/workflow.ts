@@ -6,6 +6,7 @@ import { resolveComponents, type Component } from "./components.js";
 import type { Effort, FlowConfig, Role } from "./config.js";
 import { isCommandAllowed, PathPolicy } from "./guards.js";
 import { LessonStore, type ErrorLesson } from "./lessons.js";
+import { MemoryStore, renderMemories } from "./memory.js";
 import { RunLog } from "./log.js";
 import { KeyedMutex } from "./mutex.js";
 import {
@@ -16,7 +17,7 @@ import {
   type ComponentInfo,
   type LedgerEntry,
 } from "./prompts.js";
-import type { AgentMode, AgentResult, AgentRunner, AgentScope } from "./runner/agent-runner.js";
+import type { AgentMode, AgentRequest, AgentResult, AgentRunner, AgentScope } from "./runner/agent-runner.js";
 import { runDag, validateDag } from "./scheduler.js";
 import { loadSkills, resolveStep, type SkillSet } from "./skills.js";
 import {
@@ -71,6 +72,8 @@ export interface RepoSummary {
   branch: string;
   worktree: string;
   baseRef: string;
+  /** Branch that was checked out when the run started (the merge target in supervised/auto mode). */
+  baseBranch?: string;
   testsRef?: string;
   /** Last commit made by the flow. Human corrections after it feed `distill`. */
   flowCommit?: string;
@@ -92,6 +95,8 @@ export interface RunSummary {
   repairAttempts: number;
   reviewRounds: number;
   questionsAsked: number;
+  /** Memories saved during the run (validated only if the run completed). */
+  memoriesSaved: number;
   /** Questions nobody could settle: the worker decided alone. Check these. */
   openAssumptions: QuestionRecord[];
   costUsd: number;
@@ -115,6 +120,7 @@ interface CheckResult {
 
 interface RepoState {
   root: string;
+  baseBranch?: string;
   name: string;
   integration: Workspace;
   testsRef?: string;
@@ -152,6 +158,8 @@ export function flowPaths(repoRoot: string, config: FlowConfig) {
     root,
     runs: join(root, "_runs"),
     lessons: join(root, "_lessons", `${basename(repoRoot)}.json`),
+    memory: join(root, "_memory", `${basename(repoRoot)}.jsonl`),
+    loop: join(root, "_loop"),
   };
 }
 
@@ -184,6 +192,8 @@ export async function implementTicket(opts: {
   const runId = `${ticket.id}-${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 6)}`;
   const log = await RunLog.create(paths.runs, runId);
   const lessons = await LessonStore.open(paths.lessons);
+  const memory = await MemoryStore.open(paths.memory);
+  let memoriesSaved = 0;
   const pluginPaths = config.pluginDirs.map((d) => resolve(primaryRoot, d));
   let skillSet: SkillSet | undefined;
   const repoLock = new KeyedMutex();
@@ -208,6 +218,7 @@ export async function implementTicket(opts: {
       branch: r.integration.branch,
       worktree: r.integration.path,
       baseRef: r.integration.baseRef,
+      baseBranch: r.baseBranch,
       testsRef: r.testsRef,
     }));
 
@@ -227,6 +238,7 @@ export async function implementTicket(opts: {
       repairAttempts,
       reviewRounds,
       questionsAsked: questions.length,
+    memoriesSaved,
       openAssumptions: questions.filter((q) => !q.confident),
       costUsd: Math.round(costUsd * 10_000) / 10_000,
       durationMs: Date.now() - started,
@@ -252,6 +264,39 @@ export async function implementTicket(opts: {
   /** Other repos' integration worktrees (and this repo's, when working in a task worktree) are readable. */
   function readDirsFor(p: Place): string[] {
     return [...repos.values()].map((r) => r.integration.path).filter((d) => d !== p.wt);
+  }
+
+  /** memory_search / memory_save for a step, per config.memory. */
+  function memoryToolsFor(role: Role, step: string): AgentRequest<z.ZodType>["memory"] {
+    if (!config.memory.enabled) return undefined;
+    const tools: NonNullable<AgentRequest<z.ZodType>["memory"]> = {};
+    if (config.memory.search.includes(role)) {
+      tools.search = async (query, limit) => {
+        const hits = memory.search(query, { limit: limit ?? 5, runId });
+        return hits.length ? renderMemories(hits) : "No memories match. Try other keywords, or continue without.";
+      };
+    }
+    if (config.memory.save.includes(role)) {
+      tools.save = async (input) => {
+        const e = await memory.save({
+          title: input.title,
+          content: input.content,
+          kind: input.kind,
+          tags: input.tags ?? [],
+          files: input.files ?? [],
+          ticketId: ticket.id,
+          runId,
+          role,
+        });
+        if (e.runId === runId) {
+          memoriesSaved++;
+          await log.emit({ type: "info", message: `memory saved by ${step}: [${e.kind}] ${e.title} (${e.id})` });
+          return `Saved as memory ${e.id}. It becomes permanent if this run completes.`;
+        }
+        return `Already known (memory ${e.id}); not saved again.`;
+      };
+    }
+    return Object.keys(tools).length ? tools : undefined;
   }
 
   async function agentFull<S extends z.ZodType>(
@@ -290,6 +335,8 @@ export async function implementTicket(opts: {
         effort: extra.effort ?? stepSkill.effort,
         claudeSkills: stepSkill.claudeSkills,
         plugins: pluginPaths,
+        memory: memoryToolsFor(role, step),
+        mcpServers: config.mcpAccess[role] ?? [],
       });
       costUsd += res.costUsd;
       for (const d of res.denials) await log.emit({ type: "guard", step, action: `denied ${d.tool}`, detail: d.reason });
@@ -736,7 +783,8 @@ export async function implementTicket(opts: {
       let repo = repos.get(c.repoRoot);
       if (!repo) {
         const integration = await addWorktree(c.repoRoot, join(ticketDir, c.repoName), `hector/${ticket.id}`, "HEAD");
-        repo = { root: c.repoRoot, name: c.repoName, integration, lockedPaths: [] };
+        const baseBranch = await git(c.repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD").catch(() => undefined);
+        repo = { root: c.repoRoot, name: c.repoName, integration, lockedPaths: [], baseBranch };
         repos.set(c.repoRoot, repo);
         await log.emit({ type: "info", message: `integration worktree ${integration.path} on ${integration.branch}` });
       }
@@ -761,7 +809,12 @@ export async function implementTicket(opts: {
     const infos = comps.map((c) => c.info);
 
     // ── RESEARCH ─────────────────────────────────────────────────────────
-    research = await agent("enrich", "enrich", primary, prompts.enrich(ticket, infos), DiscoverySchema);
+    const recalled =
+      config.memory.enabled && config.memory.injectIntoEnrich > 0
+        ? memory.search([ticket.title, ...ticket.acceptanceCriteria].join(" "), { limit: config.memory.injectIntoEnrich })
+        : [];
+    if (recalled.length) await log.emit({ type: "info", message: `recalled ${recalled.length} memories for enrich` });
+    research = await agent("enrich", "enrich", primary, prompts.enrich(ticket, infos, renderMemories(recalled)), DiscoverySchema);
     if (research.openQuestions.length) {
       await log.emit({ type: "info", message: "open questions (continuing autonomously)", data: research.openQuestions });
     }
@@ -923,6 +976,8 @@ export async function implementTicket(opts: {
     await log.artifact("test-plan.md", qaPlan.markdown);
 
     const repoInfo = await cleanup(true);
+    const validated = await memory.validateRun(runId);
+    if (validated) await log.emit({ type: "info", message: `${validated} memories from this run validated` });
     const blockers = review.issues.filter((i) => i.severity === "blocker");
     if (blockers.length) {
       return await finish(

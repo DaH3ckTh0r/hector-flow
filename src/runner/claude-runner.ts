@@ -16,7 +16,8 @@ import { AgentError, type AgentMode, type AgentRequest, type AgentResult, type A
 
 const READ_TOOLS = new Set(["Read", "Glob", "Grep"]);
 const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
-const ASK_TOOL = "mcp__hector__ask";
+/** Built-in tools of the in-process "hector" MCP server; each is registered only when the step gets it. */
+const HECTOR_TOOLS = new Set(["mcp__hector__ask", "mcp__hector__memory_search", "mcp__hector__memory_save"]);
 
 /** Everything decide() needs to judge one tool call. */
 export interface DecisionContext {
@@ -27,6 +28,8 @@ export interface DecisionContext {
   read: ReadPolicy;
   allowedCommands: string[];
   skillsEnabled: boolean;
+  /** External MCP servers this step may use. */
+  mcpServers: string[];
 }
 
 export type Verdict = { ok: true } | { ok: false; reason: string };
@@ -39,7 +42,8 @@ export type Verdict = { ok: true } | { ok: false; reason: string };
  * canUseTool (for calls that do ask). decide() enforces the step's mode, the
  * readable roots and the read deny-list, component write isolation, locked
  * tests and the command allowlist. Web tools, subagents and external MCP are
- * denied; the only MCP tool is the workflow's own in-process `ask`.
+ * denied. MCP tools are limited to the workflow's in-process server (ask,
+ * memory) and the external servers that mcpAccess grants to the step.
  */
 export class ClaudeAgentRunner implements AgentRunner {
   constructor(private readonly config: FlowConfig) {}
@@ -62,6 +66,7 @@ export class ClaudeAgentRunner implements AgentRunner {
       read: new ReadPolicy([scope.root, ...(req.readDirs ?? [])], scope.readDeny ?? this.config.readDenyPaths),
       allowedCommands: scope.allowedCommands,
       skillsEnabled: claudeSkills.length > 0,
+      mcpServers: (req.mcpServers ?? []).filter((n) => n in this.config.mcpServers),
     };
 
     const judge = (toolName: string, input: Record<string, unknown>): Verdict => {
@@ -88,23 +93,59 @@ export class ClaudeAgentRunner implements AgentRunner {
 
     const mcpServers: Options["mcpServers"] = {};
     const allowedTools = [...READ_TOOLS];
+    const hectorTools = [];
     if (req.ask) {
       const ask = req.ask;
-      mcpServers.hector = createSdkMcpServer({
-        name: "hector",
-        tools: [
-          tool(
-            "ask",
-            "Ask the workflow a question about the ticket, the plan or the intended behavior when the repository does not answer it. " +
-              "Use it before guessing on anything that changes behavior. You always get an answer; if it says no authoritative answer exists, " +
-              "make the most reasonable decision and record the assumption in your notes.",
-            { question: z.string().describe("One specific, self-contained question") },
-            async ({ question }) => ({ content: [{ type: "text", text: await ask(question) }] }),
-          ),
-        ],
-      });
-      allowedTools.push(ASK_TOOL);
+      hectorTools.push(
+        tool(
+          "ask",
+          "Ask the workflow a question about the ticket, the plan or the intended behavior when the repository does not answer it. " +
+            "Use it before guessing on anything that changes behavior. You always get an answer; if it says no authoritative answer exists, " +
+            "make the most reasonable decision and record the assumption in your notes.",
+          { question: z.string().describe("One specific, self-contained question") },
+          async ({ question }) => ({ content: [{ type: "text", text: await ask(question) }] }),
+        ),
+      );
     }
+    if (req.memory?.search) {
+      const search = req.memory.search;
+      hectorTools.push(
+        tool(
+          "memory_search",
+          "Search this repository's persistent memory: decisions, discoveries, conventions and gotchas recorded by earlier runs. " +
+            "Search before deciding something a previous ticket may already have settled.",
+          {
+            query: z.string().describe("Keywords: component, file, concept or error"),
+            limit: z.number().int().min(1).max(20).optional().describe("Maximum results (default 5)"),
+          },
+          async ({ query, limit }) => ({ content: [{ type: "text", text: await search(query, limit) }] }),
+        ),
+      );
+    }
+    if (req.memory?.save) {
+      const save = req.memory.save;
+      hectorTools.push(
+        tool(
+          "memory_save",
+          "Record something future runs on this repository should know: a decision and its reason, a non-obvious discovery about " +
+            "the code, a convention, or a gotcha that cost you time. Not for task progress or things obvious from the code. " +
+            "It becomes permanent only if this run completes.",
+          {
+            title: z.string().describe("Short, searchable summary"),
+            content: z.string().describe("The knowledge itself, with the why"),
+            kind: z.enum(["decision", "discovery", "convention", "gotcha"]),
+            tags: z.array(z.string()).optional(),
+            files: z.array(z.string()).optional().describe("Related files, relative to the component folder"),
+          },
+          async (input) => ({ content: [{ type: "text", text: await save(input) }] }),
+        ),
+      );
+    }
+    if (hectorTools.length) {
+      mcpServers.hector = createSdkMcpServer({ name: "hector", tools: hectorTools });
+      for (const t of hectorTools) allowedTools.push(`mcp__hector__${t.name}`);
+    }
+    for (const name of ctx.mcpServers) mcpServers[name] = this.config.mcpServers[name]!;
 
     const options: Options = {
       cwd: req.cwd,
@@ -159,7 +200,13 @@ export function decide(ctx: DecisionContext, toolName: string, input: Record<str
   const { mode, cwd } = ctx;
 
   if (READ_TOOLS.has(toolName)) return checkRead(ctx, toolName, input);
-  if (toolName === "TodoWrite" || toolName === ASK_TOOL) return { ok: true };
+  if (toolName === "TodoWrite" || HECTOR_TOOLS.has(toolName)) return { ok: true };
+  if (toolName.startsWith("mcp__")) {
+    const server = toolName.split("__")[1] ?? "";
+    return ctx.mcpServers.includes(server)
+      ? { ok: true }
+      : { ok: false, reason: `MCP server "${server}" is not available to this step (see mcpAccess).` };
+  }
   if (toolName === "Skill") {
     return ctx.skillsEnabled ? { ok: true } : { ok: false, reason: "No skills are enabled for this step." };
   }

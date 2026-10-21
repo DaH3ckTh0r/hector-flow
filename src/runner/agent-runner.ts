@@ -41,6 +41,21 @@ export interface AgentRequest<S extends z.ZodType> {
   claudeSkills?: string[];
   /** Absolute paths of local Claude Code plugins to load (skills only; their MCP servers are not loaded). */
   plugins?: string[];
+  /** Persistent memory tools for this step; each one present becomes an MCP tool. */
+  memory?: {
+    search?: (query: string, limit?: number) => Promise<string>;
+    save?: (input: MemorySaveInput) => Promise<string>;
+  };
+  /** Names of external MCP servers (config.mcpServers) this step may use. */
+  mcpServers?: string[];
+}
+
+export interface MemorySaveInput {
+  title: string;
+  content: string;
+  kind: "decision" | "discovery" | "convention" | "gotcha";
+  tags?: string[];
+  files?: string[];
 }
 
 export interface AgentScope {

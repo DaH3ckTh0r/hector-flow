@@ -82,6 +82,26 @@ El flujo se detiene a propósito para que decidas tú. Los worktrees de tarea se
 | `denied Skill — No skills are enabled for this step` | El agente intentó usar una skill de Claude que no tiene asignada. | Agrégala en la skill del paso (`skills:`) o en `claudeSkills.<rol>`. |
 | `review round N: a approves, b rejects → not approved` | Con varios jueces, basta con que uno rechace. | Mira `review_<juez>-N.json` para ver los motivos. Si un juez es demasiado estricto, ajusta su `focus` o la skill `review`. |
 
+## Memoria, MCP, backlog y bucle
+
+| Mensaje | Causa | Solución |
+|---|---|---|
+| `mcpAccess.<rol> names unknown MCP servers` (en `check`) | `mcpAccess` nombra un servidor que no está en `mcpServers`. | Defínelo o corrige el nombre. |
+| `denied mcp__x__… — MCP server "x" is not available to this step` | El agente intentó usar un servidor no asignado a su paso. | Agrégalo en `mcpAccess.<rol>` si debe tenerlo. |
+| `No backlog configured…` | `start` sin sección `backlog`. | Configúrala ([15-backlog-y-bucle.md](15-backlog-y-bucle.md)). |
+| `Backlog folder … does not exist.` | La ruta de `backlog.path` no existe. | Créala o corrige la ruta (relativa al repo principal). |
+| `Environment variable X is not set…` | Falta el token de GitHub o Azure DevOps. | Exporta la variable de `tokenEnv`. |
+| `GitHub 401/403/404 …` / `Azure DevOps 401/403 …` | Token inválido, sin permisos, o repo/proyecto mal escrito. | Revisa permisos del token (issues; Work Items read & write) y los nombres. |
+| `· skipped <ref>: … no acceptance criteria` | Un elemento del backlog no tiene criterios. | Agrega la sección de criterios (en ADO, el campo Acceptance Criteria). |
+| `Another hector-flow loop is running for this repo (pid N…)` | Ya hay un `start` en marcha. | Detenlo, o espera. Si el proceso murió, el bloqueo se libera solo. |
+| `→ failed: … has uncommitted changes` en cada ticket | La carpeta de tickets está dentro de un repo y tiene archivos sin commitear. | Muévela fuera del repo o commitea los tickets. |
+| `<repo>: your checkout is on X; switch it to Y to merge.` | `approve`/`auto` necesita tu checkout en la rama base. | `git switch Y` y repite `approve`. |
+| `<repo>: your checkout has uncommitted changes.` | No se fusiona sobre cambios sin commitear. | Commitea o `git stash`, y repite. |
+| `conflicts merging hector/<ID> into <rama>… Nothing was merged.` | La rama base avanzó y choca con el ticket. | `requeue` para rehacerlo sobre la base actual, o resuelve a mano. |
+| `"<comando>" fails after merging. Every repo was rolled back.` | El ticket pasa solo, pero no combinado con lo que ya está en la base. | `requeue` (se rehará sobre la base nueva) o arréglalo a mano en la rama. |
+| `N open assumption(s): review before merging` | Modo `auto` con supuestos abiertos. | Revisa los supuestos y `approve`, o desactiva `autoMergeRequiresNoAssumptions`. |
+| `⚠ could not report back to …` | No se pudo comentar en GitHub/ADO. | Revisa el permiso de escritura del token; el bucle sigue igualmente. |
+
 ## Otros problemas
 
 | Síntoma | Causa probable | Solución |

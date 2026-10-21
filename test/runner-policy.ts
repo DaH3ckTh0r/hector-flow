@@ -26,6 +26,7 @@ const ctx = (mode: DecisionContext["mode"], skillsEnabled = false): DecisionCont
   read: new ReadPolicy([root, other], DEFAULT_READ_DENY),
   allowedCommands: ["dotnet test", "dotnet build"],
   skillsEnabled,
+  mcpServers: ["context7"],
 });
 const d = (mode: DecisionContext["mode"], tool: string, input: Record<string, unknown>, skills = false) =>
   decide(ctx(mode, skills), tool, input);
@@ -71,6 +72,10 @@ assert.ok(!d("edit", "Bash", { command: "git push" }).ok, "non-allowlisted comma
 assert.ok(!d("edit", "WebFetch", { url: "https://x" }).ok, "web tools rejected");
 assert.ok(!d("edit", "PowerShell", { command: "Get-ChildItem" }).ok, "unknown tools rejected");
 assert.ok(d("edit", "mcp__hector__ask", { question: "?" }).ok, "ask tool allowed");
+assert.ok(d("readonly", "mcp__hector__memory_search", { query: "x" }).ok, "built-in memory tools allowed (registered only when granted)");
+assert.ok(d("readonly", "mcp__context7__get-library-docs", {}).ok, "external MCP server granted to the step");
+const denied = d("readonly", "mcp__engram__mem_save", {});
+assert.ok(!denied.ok && /not available to this step/.test(denied.reason), "external MCP server not granted is denied");
 
 // ── Skills ────────────────────────────────────────────────────────────────
 assert.ok(!d("edit", "Skill", { skill: "xunit" }).ok, "Skill tool denied when the step has no skills");
@@ -81,4 +86,4 @@ assert.ok(d("tests", "Write", { file_path: `${root}/tests/Api.Tests/UsersTests.c
 assert.ok(!d("tests", "Write", { file_path: `${apiDir}/Controllers/Users.cs` }).ok, "test author cannot write production code");
 assert.ok(!d("tests", "Write", { file_path: `${root}/web/src/App.test.tsx` }).ok, "test author cannot write another component's tests");
 
-console.log("✓ runner permission rules: read roots and secrets, modes, component isolation, locked tests, skills, allowlist");
+console.log("✓ runner permission rules: read roots and secrets, modes, component isolation, locked tests, skills, MCP access, allowlist");

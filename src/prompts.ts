@@ -89,10 +89,19 @@ ${ledger
     : "";
 
 export const prompts = {
-  enrich: (t: Ticket, cs: ComponentInfo[]) => `${ticketBlock(t)}
+  enrich: (t: Ticket, cs: ComponentInfo[], memories = "") => `${ticketBlock(t)}
 
 ${componentsBlock(cs)}
-
+${
+  memories
+    ? `
+<memories_from_earlier_tickets>
+What earlier runs on this repository recorded and that looks relevant. Verify against the code before relying on it.
+${memories}
+</memories_from_earlier_tickets>
+`
+    : ""
+}
 Research the components and report what is needed to implement this ticket.`,
 
   plan: (t: Ticket, d: Discovery, cs: ComponentInfo[]) => `${ticketBlock(t)}

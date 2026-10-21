@@ -100,6 +100,7 @@ tail -f $RUN/events.jsonl | jq -r '"\(.ts[11:19]) \(.type) \(.step // "") \(.mes
 | `reviewRounds` | número | Rondas de corrección por revisión |
 | `questionsAsked` | número | Preguntas `ask` |
 | `openAssumptions[]` | objeto[] | Preguntas sin respuesta con fundamento: `asker`, `question`, `answer`, `confident`, `basis` |
+| `memoriesSaved` | número | Memorias guardadas en la ejecución (validadas solo si terminó en `completed`) |
 | `costUsd` | número | Costo estimado total, sumando todos los agentes |
 | `durationMs` | número | Duración total |
 | `runDir` | string | Carpeta de la ejecución |
@@ -113,6 +114,7 @@ Cada elemento de `repos[]`:
 | `branch` | `hector/<ID>` |
 | `worktree` | Ruta del worktree de integración, donde está el resultado |
 | `baseRef` | Commit del que partió la rama |
+| `baseBranch` | Rama activa en tu checkout cuando empezó el ticket: el destino de `approve` y del modo `auto` |
 | `testsRef` | Commit de los tests bloqueados (igual a `baseRef` si ese repo no tuvo tests nuevos) |
 | `flowCommit` | Último commit que hizo el flujo. Lo que cambies después es lo que `distill` analiza |
 
@@ -156,6 +158,18 @@ Un elemento por commit que hizo el flujo:
 | `notes` | Notas del agente |
 
 Cada implementador recibe el ledger en su prompt para mantener coherencia con lo que ya se construyó, y `distill` lo usa para atribuir tus correcciones.
+
+## Memoria y estado del bucle
+
+Junto a `_runs/` y `_lessons/`, en la carpeta de trabajo:
+
+| Ruta | Contenido |
+|---|---|
+| `_memory/<repo>.jsonl` | Memoria persistente: una entrada JSON por línea. Ver [14-memoria-y-mcp.md](14-memoria-y-mcp.md). |
+| `_loop/state.json` | Estado del bucle: un objeto por ticket con `id`, `title`, `ref`, `status`, `updatedAt`, `runId`, `runDir`, `reason`, `repos` y `openAssumptions`. |
+| `_loop/lock` | Bloqueo del bucle en curso (`pid`, `startedAt`). |
+
+Eventos `info` relacionados: `recalled N memories for enrich`, `memory saved by <paso>: [kind] título (id)`, `N memories from this run validated`.
 
 ## Enviar los logs a otro sistema
 

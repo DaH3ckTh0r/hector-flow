@@ -530,6 +530,10 @@ Cada uno empieza con `clean` y vuelve a `run`.
 
 ---
 
+## Siguiente: el bucle continuo
+
+En lugar de ejecutar `run` ticket a ticket, puedes dejar que hector-flow tome los tickets de una carpeta, de GitHub Issues o de Azure DevOps y espere tu aprobación para fusionar. Hay un recorrido con estos mismos repos en [15-backlog-y-bucle.md](15-backlog-y-bucle.md#recorrido-con-los-repos-del-tutorial).
+
 ## Llevarlo a tu proyecto real
 
 1. Copia `examples/multi-component.config.json` a tu repo principal como `hector-flow.config.json` (o `examples/hector-flow.config.json` si es un solo repo).

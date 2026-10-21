@@ -9,13 +9,21 @@ import { git } from "./tools/git.js";
 import { distillTicket } from "./distill.js";
 import { ClaudeAgentRunner } from "./runner/claude-runner.js";
 import { readTicket } from "./ticket.js";
-import { implementTicket } from "./workflow.js";
+import { approveTicket, loopStatus, rejectTicket, requeueTicket, runLoop, type LoopMode } from "./loop.js";
+import { MemoryStore, renderMemories } from "./memory.js";
+import { flowPaths, implementTicket } from "./workflow.js";
 
 const USAGE = `hector-flow check   --repo <path> [--ticket <ticket.md>] [--no-commands] [--config <path>]
 hector-flow run     --repo <path> --ticket <ticket.md>                    [--config <path>]
 hector-flow distill --repo <path> --ticket-id <ID>                        [--config <path>]
 hector-flow clean   --repo <path> --ticket-id <ID>                        [--config <path>]
 hector-flow skills  --repo <path> [list | eject <role…|all>]              [--config <path>]
+hector-flow start   --repo <path> [--mode manual|supervised|auto] [--once] [--max <n>]
+hector-flow status  --repo <path>
+hector-flow approve --repo <path> <ID>
+hector-flow reject  --repo <path> <ID> [--reason <text>]
+hector-flow requeue --repo <path> <ID>
+hector-flow memory  --repo <path> [list [--all] | search <words…> | forget <id…>]
 
   check    Validates config, repos, each component's commands and the ticket. No model calls.
   run      Implements the ticket: worktrees per task, branches hector/<ID> in every touched repo.
@@ -25,17 +33,29 @@ hector-flow skills  --repo <path> [list | eject <role…|all>]              [--c
            in every component repo. Logs and lessons are kept.
   skills   Lists each step's skill (where it comes from, model, effort, Claude skills),
            or copies built-in skills into <repo>/.hector/skills to customize them.
+  start    Continuous loop: takes tickets from the configured backlog one by one.
+           manual leaves branches, supervised waits for approve/reject, auto merges.
+  status   Lists the loop's tickets and their state.
+  approve  Merges a ticket's branches into each repo's base branch (verified, rolled back on failure).
+  reject   Discards a ticket's branches and marks it rejected.
+  requeue  Cleans a ticket and forgets its state so the loop runs it again.
+  memory   Lists, searches or removes entries of the repo's persistent memory.
 
   --repo         Primary repository (where hector-flow.config.json lives)
   --ticket       Markdown ticket with '# ID: title' and '## Acceptance criteria'
   --ticket-id    Ticket id, e.g. AB-123
   --config       Config file (default: <repo>/hector-flow.config.json)
   --no-commands  check: skip running build/test/lint
+  --mode         start: overrides loop.mode
+  --once         start: process what is ready now, then exit
+  --max          start: stop after this many tickets
+  --reason       reject: why (reported back to the backlog)
+  --all          memory list: include provisional entries
 
 Exit codes: 0 completed/ok · 3 needs_human · 1 failed · 2 usage error
 `;
 
-const COMMANDS = ["check", "run", "distill", "clean", "skills"] as const;
+const COMMANDS = ["check", "run", "distill", "clean", "skills", "start", "status", "approve", "reject", "requeue", "memory"] as const;
 type Command = (typeof COMMANDS)[number];
 
 async function main(): Promise<number> {
@@ -47,6 +67,11 @@ async function main(): Promise<number> {
       "ticket-id": { type: "string" },
       config: { type: "string" },
       "no-commands": { type: "boolean" },
+      mode: { type: "string" },
+      once: { type: "boolean" },
+      max: { type: "string" },
+      reason: { type: "string" },
+      all: { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -112,6 +137,63 @@ async function main(): Promise<number> {
     return 0;
   }
 
+  const ticketArg = values["ticket-id"] ?? positionals[1];
+
+  if (command === "status") {
+    const rows = await loopStatus({ repo, config });
+    if (!rows.length) return (console.log("The loop has not processed any ticket yet."), 0);
+    for (const r of rows) {
+      console.log(`${r.id.padEnd(14)} ${r.status.padEnd(16)} ${r.updatedAt.slice(0, 16).replace("T", " ")}  ${r.title}`);
+      if (r.reason) console.log(`${" ".repeat(15)}${r.reason.split("\n")[0]}`);
+    }
+    return 0;
+  }
+
+  if (command === "approve" || command === "reject" || command === "requeue") {
+    if (!ticketArg) return (console.log(`Usage: hector-flow ${command} --repo <path> <ID>`), 2);
+    if (command === "approve") {
+      const s = await approveTicket({ repo, config, ticketId: ticketArg, log: (l) => console.log(l) });
+      console.log(`${s.id} → ${s.status}${s.reason ? `\n${s.reason}` : ""}`);
+      return s.status === "merged" ? 0 : 1;
+    }
+    if (command === "reject") {
+      const s = await rejectTicket({ repo, config, ticketId: ticketArg, reason: values.reason });
+      console.log(`${s.id} → rejected; its branches were removed.`);
+      return 0;
+    }
+    const existed = await requeueTicket({ repo, config, ticketId: ticketArg });
+    console.log(existed ? `${ticketArg} requeued: the loop will run it again.` : `${ticketArg} had no state; branches cleaned if any.`);
+    return 0;
+  }
+
+  if (command === "memory") {
+    const primaryRoot = await git(repo, "rev-parse", "--show-toplevel");
+    const store = await MemoryStore.open(flowPaths(primaryRoot, config).memory);
+    const sub = positionals[1] ?? "list";
+    if (sub === "search") {
+      const q = positionals.slice(2).join(" ");
+      if (!q) return (console.log("Usage: hector-flow memory --repo <path> search <words…>"), 2);
+      const hits = store.search(q, { limit: 10 });
+      console.log(hits.length ? renderMemories(hits) : "No memories match.");
+      return 0;
+    }
+    if (sub === "forget") {
+      const ids = positionals.slice(2);
+      if (!ids.length) return (console.log("Usage: hector-flow memory --repo <path> forget <id…>"), 2);
+      const removed = await store.forget(ids);
+      console.log(removed.length ? `Removed: ${removed.join(", ")}` : "No memory with those ids.");
+      return 0;
+    }
+    if (sub !== "list") return (console.log(USAGE), 2);
+    const all = store.all({ includeProvisional: values.all });
+    if (!all.length) return (console.log(`No memories yet (${store.path}).`), 0);
+    for (const e of all) {
+      console.log(`${e.id}  ${e.status === "validated" ? "        " : "(prov.) "}[${e.kind}] ${e.title}  — ${e.ticketId}, ${e.role}`);
+    }
+    console.log(`\n${all.length} entr${all.length === 1 ? "y" : "ies"} · ${store.path}`);
+    return 0;
+  }
+
   if (command === "clean") {
     if (!values["ticket-id"]) return (console.log(USAGE), 2);
     const res = await cleanTicket({ repo, ticketId: values["ticket-id"], config });
@@ -122,6 +204,24 @@ async function main(): Promise<number> {
   }
 
   const runner = new ClaudeAgentRunner(config);
+
+  if (command === "start") {
+    const mode = values.mode as LoopMode | undefined;
+    if (mode && !["manual", "supervised", "auto"].includes(mode)) return (console.log("--mode must be manual, supervised or auto"), 2);
+    const max = values.max ? Number(values.max) : undefined;
+    if (max !== undefined && !(max > 0)) return (console.log("--max must be a positive number"), 2);
+    const stop = new AbortController();
+    let interrupts = 0;
+    process.on("SIGINT", () => {
+      if (++interrupts > 1) process.exit(130);
+      console.log("\nStopping after the current ticket (Ctrl+C again to quit now)…");
+      stop.abort();
+    });
+    const res = await runLoop({ repo, config, runner, mode, once: values.once, maxTickets: max, signal: stop.signal });
+    console.log(`\nLoop finished: ${res.processed.length} ticket(s) processed.`);
+    for (const t of res.processed) console.log(`  ${t.id.padEnd(14)} ${t.status}`);
+    return 0;
+  }
 
   if (command === "distill") {
     if (!values["ticket-id"]) return (console.log(USAGE), 2);

@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { loadSkills } from "./skills.js";
 import { resolveComponents } from "./components.js";
 import type { FlowConfig } from "./config.js";
@@ -119,6 +119,33 @@ export async function preflight(opts: {
   const judges = opts.config.review.judges;
   if (judges.length > 1) {
     add({ ok: true, label: `review by ${judges.length} independent judges: ${judges.map((j) => j.name).join(", ")}` });
+  }
+
+  const b = opts.config.backlog;
+  if (b) {
+    if (b.type === "folder") {
+      const dir = isAbsolute(b.path) ? b.path : resolve(primaryRoot, b.path);
+      add({ ok: existsSync(dir), label: `backlog folder ${dir} exists` });
+      const inside = [...new Set(components.map((c) => c.repoRoot))].find((r) => !relative(r, dir).startsWith(".."));
+      if (inside) {
+        add({
+          ok: true,
+          warn: true,
+          label: "backlog folder is inside a component repo",
+          detail: `New ticket files there leave ${inside} with uncommitted changes, and runs require clean repos. Commit tickets as you add them, or move the folder outside the repo (e.g. "../tickets").`,
+        });
+      }
+    } else {
+      add({
+        ok: !!process.env[b.tokenEnv],
+        label: `backlog ${b.type}: token variable ${b.tokenEnv} is set`,
+        detail: process.env[b.tokenEnv] ? undefined : `Export ${b.tokenEnv} before running 'start'.`,
+      });
+    }
+  }
+  for (const [role, names] of Object.entries(opts.config.mcpAccess)) {
+    const unknown = (names ?? []).filter((n) => !(n in opts.config.mcpServers));
+    if (unknown.length) add({ ok: false, label: `mcpAccess.${role} names unknown MCP servers: ${unknown.join(", ")}` });
   }
 
   if (opts.ticketPath) {

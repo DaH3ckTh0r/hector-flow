@@ -16,6 +16,9 @@ src/
 ├── prompts.ts             systemPrompt (skill + pautas) y el prompt de cada paso
 ├── guards.ts              Globs, PathPolicy (escritura), ReadPolicy (lectura), allowlist de comandos
 ├── lessons.ts             Pautas y lecciones de error
+├── memory.ts              Memoria persistente: guardar, buscar (tf-idf), validar por ejecución
+├── backlog.ts             Adaptadores de backlog: carpeta, GitHub Issues, Azure DevOps
+├── loop.ts                Bucle continuo, estado, bloqueo, modos, fusión verificada, approve/reject/requeue
 ├── distill.ts             Comando distill
 ├── check.ts               Comando check
 ├── clean.ts               Comando clean
@@ -33,6 +36,7 @@ test/
 ├── helpers.ts             ScriptedRunner: un AgentRunner falso, determinista
 ├── runner-policy.ts       Reglas de permisos del runner real
 ├── e2e.ts                 17 escenarios del flujo
+├── loop.ts                Memoria, acceso MCP, adaptadores (HTTP simulado) y el bucle
 └── tutorial.ts            El tutorial de punta a punta
 ```
 
@@ -98,7 +102,8 @@ Puede ignorar `resumeSessionId` (los defectos irán a un implementador nuevo), `
 | Herramientas prohibidas | `disallowedTools: WebFetch, WebSearch, Task, Agent` |
 | JSON con contrato | `outputFormat: { type: "json_schema", schema }` y luego `schema.safeParse` |
 | Retomar sesión | `options.resume` y `result.session_id` |
-| `ask` | Servidor MCP en el proceso (`createSdkMcpServer`) con una herramienta `ask` |
+| `ask`, memoria | Servidor MCP en el proceso (`createSdkMcpServer`) con `ask`, `memory_search` y `memory_save`, cada una solo si el paso la tiene |
+| MCP externo | `options.mcpServers` con los servidores de `mcpAccess` del paso; `decide()` niega los demás |
 | Lectura de otros repos | `options.additionalDirectories` |
 | Convenciones del repo | `settingSources: ["project"]` si `loadProjectSettings` |
 | Topes | `maxTurns`, `maxBudgetUsd` |
@@ -151,9 +156,9 @@ Ejemplo: un paso de seguridad después de la revisión.
 
 Es el siguiente paso natural (pasos 6 y 8 del video). El punto de enganche es el cierre de `implementTicket`, cuando el estado es `completed`: para cada elemento de `repos`, `git push -u origin <branch>` desde `worktree`, y crear el PR con la CLI de tu plataforma (`gh pr create`, `az repos pr create`) usando `test-plan.md` como descripción y enlazando los PR entre sí. Conviene hacerlo opcional con un campo nuevo en la config.
 
-### Leer el ticket desde Azure DevOps, Jira o Linear
+### Otro origen de tickets (Jira, Linear…)
 
-`implementTicket` recibe un objeto `Ticket` (`id`, `title`, `body`, `acceptanceCriteria`). Basta con construirlo desde la API de tu herramienta en lugar de `readTicket`, por ejemplo con un comando nuevo en `cli.ts`.
+Implementa `BacklogAdapter` (`src/backlog.ts`): `list()` devuelve elementos `{ ticket, ref }` y los omitidos con su motivo; `report()` publica un mensaje en el origen. Para construir el ticket, arma markdown con `# ID-123: título` y una sección de criterios, y pásalo a `parseTicket`. Agrega el tipo a `backlog` en `src/config.ts` y a `createBacklog`. Prueba el adaptador con un `fetch` simulado, como `test/loop.ts`.
 
 ## Desarrollo
 

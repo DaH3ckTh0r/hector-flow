@@ -36,11 +36,12 @@ npm run typecheck   # compila sin errores
 npm test            # ~1 minuto, sin llamadas al modelo
 ```
 
-`npm test` ejecuta tres suites:
+`npm test` ejecuta cuatro suites:
 
 1. `test/runner-policy.ts`: las reglas de permisos de los agentes.
 2. `test/e2e.ts`: 17 escenarios del flujo con un runner simulado.
-3. `test/tutorial.ts`: el tutorial completo, de punta a punta.
+3. `test/loop.ts`: memoria, acceso MCP, adaptadores de backlog (con HTTP simulado) y el bucle.
+4. `test/tutorial.ts`: el tutorial completo, de punta a punta.
 
 Debe terminar con `tutorial checks passed`.
 

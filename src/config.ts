@@ -102,6 +102,91 @@ export const ConfigSchema = z.object({
   claudeSkills: z.partialRecord(RoleSchema, z.array(z.string())).default({}),
   /** Local Claude Code plugin folders (skills, agents, hooks) loaded into every agent. Relative to the primary repo. */
   pluginDirs: z.array(z.string()).default([]),
+  /** Persistent memory shared by every run on this repo (built-in MCP tools memory_search / memory_save). */
+  memory: z
+    .object({
+      enabled: z.boolean().default(true),
+      /** Steps that get memory_search. */
+      search: z.array(RoleSchema).default(["enrich", "plan", "testAuthor", "coder", "diagnose", "review", "lead"]),
+      /** Steps that get memory_save. */
+      save: z.array(RoleSchema).default(["enrich", "coder", "diagnose"]),
+      /** Memories injected into the enrich prompt (most relevant to the ticket). 0 to disable. */
+      injectIntoEnrich: z.number().int().min(0).default(5),
+    })
+    .prefault({}),
+  /**
+   * External MCP servers agents may use (Engram, Context7, …), by name. Same
+   * shape as Claude Code's mcpServers. Which steps see which server: mcpAccess.
+   */
+  mcpServers: z
+    .record(
+      z.string().regex(/^[a-zA-Z][\w-]*$/).refine((n) => n !== "hector", "'hector' is reserved for built-in tools"),
+      z.union([
+        z.object({
+          type: z.literal("stdio").optional(),
+          command: z.string(),
+          args: z.array(z.string()).optional(),
+          env: z.record(z.string(), z.string()).optional(),
+        }),
+        z.object({
+          type: z.enum(["http", "sse"]),
+          url: z.string().url(),
+          headers: z.record(z.string(), z.string()).optional(),
+        }),
+      ]),
+    )
+    .default({}),
+  /** Step → MCP server names it may use. A server not listed for a step is invisible to it. */
+  mcpAccess: z.partialRecord(RoleSchema, z.array(z.string())).default({}),
+  /** Where `hector-flow start` takes tickets from. */
+  backlog: z
+    .discriminatedUnion("type", [
+      z.object({
+        type: z.literal("folder"),
+        /** Folder with ticket .md files, relative to the primary repo or absolute. */
+        path: z.string(),
+      }),
+      z.object({
+        type: z.literal("github"),
+        /** owner/name */
+        repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/),
+        /** Only open issues with this label. */
+        label: z.string().default("hector"),
+        /** Environment variable with the token. */
+        tokenEnv: z.string().default("GITHUB_TOKEN"),
+        /** Post the run's result as an issue comment. */
+        comment: z.boolean().default(true),
+      }),
+      z.object({
+        type: z.literal("azure-devops"),
+        organization: z.string(),
+        project: z.string(),
+        /** Only work items with this tag… */
+        tag: z.string().default("hector"),
+        /** …in one of these states. */
+        states: z.array(z.string()).default(["New", "Approved", "Committed", "To Do", "Active"]),
+        /** Full WIQL query instead of tag + states. Must select [System.Id]. */
+        wiql: z.string().optional(),
+        /** Environment variable with a Personal Access Token (Work Items: read & write). */
+        tokenEnv: z.string().default("AZURE_DEVOPS_PAT"),
+        comment: z.boolean().default(true),
+      }),
+    ])
+    .optional(),
+  /** Continuous loop (`hector-flow start`). */
+  loop: z
+    .object({
+      /**
+       * manual: implement and leave the branches. supervised: implement, then wait
+       * for `approve`/`reject`. auto: implement and merge completed tickets.
+       */
+      mode: z.enum(["manual", "supervised", "auto"]).default("supervised"),
+      /** Seconds between backlog checks when there is nothing to do. */
+      intervalSeconds: z.number().int().min(5).default(60),
+      /** auto mode: only merge tickets with no open assumptions. */
+      autoMergeRequiresNoAssumptions: z.boolean().default(true),
+    })
+    .prefault({}),
   /**
    * Paths agents may never read, even inside their workspace. Globs: relative
    * ones match anywhere under a readable root; ones starting with ~ or / are absolute.

@@ -23,6 +23,8 @@ export interface Call {
   claudeSkills: string[];
   plugins: string[];
   prompt: string;
+  memoryTools: string[];
+  mcpServers: string[];
 }
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -67,6 +69,8 @@ export class ScriptedRunner implements AgentRunner {
       claudeSkills: req.claudeSkills ?? [],
       plugins: req.plugins ?? [],
       prompt: req.prompt,
+      memoryTools: Object.keys(req.memory ?? {}),
+      mcpServers: req.mcpServers ?? [],
     });
     this.systemPrompts[req.role] = req.systemPrompt;
     const next = this.script[key]?.shift();
