@@ -23,6 +23,9 @@ src/
 ├── usage.ts               Contadores de tokens normalizados, diferencias de sesiones retomadas, informes de usage
 ├── runtimes.ts            resolveRuntime (runtime/modelo/esfuerzo por paso), RouterRunner, createRunner
 ├── tool-bridge.ts         Servidor MCP HTTP local: ask y memoria para Codex y OpenCode
+├── checkpoint.ts          state.json: estado de la ejecución para reanudarla (escritura atómica)
+├── retry.ts               Qué fallos de agentes son transitorios y la espera entre reintentos
+├── memory-backend.ts      Memoria local (JSONL) o Engram (MCP stdio), con escritura solo al completar
 ├── distill.ts             Comando distill
 ├── check.ts               Comando check
 ├── clean.ts               Comando clean
@@ -49,6 +52,8 @@ test/
 ├── runtimes.ts            Puente MCP (cliente MCP real), Codex, OpenCode y Copilot con SDK simulados, enrutamiento
 ├── pi.ts                  pi con una sesión REAL (herramientas reales sobre archivos) y el modelo simulado de pi-ai
 ├── usage.ts               Tokens de cada runtime (SDK simulados) e informes
+├── durable.ts             Reintentos; un proceso hijo muere por SIGKILL a mitad de una tarea y se reanuda
+├── engram.ts              Backend Engram contra fake-engram.mjs (mismo contrato MCP que Engram)
 ├── sandbox.ts             Proxy de salida con sockets reales, limpieza de credenciales, líneas de check
 ├── e2e.ts                 18 escenarios del flujo
 ├── loop.ts                Memoria, acceso MCP, adaptadores (HTTP simulado) y el bucle

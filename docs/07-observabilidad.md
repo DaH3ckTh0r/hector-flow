@@ -144,6 +144,8 @@ Los nombres de archivo reemplazan `:` y otros caracteres no válidos en Windows 
 | `test-plan.md` | Plan de pruebas manuales |
 | `ledger.json` | Ver abajo |
 
+Además, en la carpeta de la ejecución: `summary.json` (al terminar) y `state.json`, el checkpoint que permite reanudarla ([18-ejecuciones-durables.md](18-ejecuciones-durables.md)). Mientras corre, `state.json` dice en qué fase va y qué tareas se integraron: `jq '{status, tasks: [.tasks[] | {taskId, integrated}]}' $RUN/state.json`.
+
 ### `ledger.json`
 
 Un elemento por commit que hizo el flujo:

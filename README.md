@@ -12,7 +12,8 @@ Le das un ticket con criterios de aceptación y te devuelve, en cada repositorio
 - La revisión puede hacerse con **varios jueces independientes** (con modelos distintos); todos deben aprobar.
 - Los agentes solo leen su espacio de trabajo y **nunca archivos de secretos** (`.env`, claves, `~/.ssh`…). Los comandos de build y test se ejecutan **sin tus credenciales**.
 - **Sandbox** listo para usar: un contenedor que solo ve tus repos y sale a Internet solo por un proxy con lista de dominios (`sandbox/hector-sandbox.sh`).
-- **Memoria persistente** por repo: los agentes guardan decisiones y descubrimientos que los siguientes tickets recuperan (validada solo si el ticket termina bien). Servidores **MCP externos** (Engram, Context7…) asignables por paso.
+- **Ejecuciones durables**: reintentos ante fallos pasajeros del proveedor o la red, y `resume` para continuar una ejecución interrumpida donde quedó, sin repetir lo terminado.
+- **Memoria persistente** por repo: los agentes guardan decisiones y descubrimientos que los siguientes tickets recuperan (validada solo si el ticket termina bien), en un archivo propio o en **Engram**. Servidores **MCP externos** (Engram, Context7…) asignables por paso.
 - **Consumo de tokens por llamada**: entrada, caché escrita y leída, salida y razonamiento, por modelo, en el log de cada paso, en el resumen y en `usage`.
 - **Varios runtimes**: cada paso, y cada juez, puede correr en **Claude**, **GitHub Copilot**, **pi**, **OpenCode** (cualquier proveedor) o **Codex** (OpenAI), con las mismas skills, contratos y herramientas del flujo.
 - **Bucle continuo** (`start`): toma tickets de una carpeta, de **GitHub Issues** o de **Azure DevOps**, y según el modo deja las ramas, espera tu aprobación o las **fusiona con verificación y reversión**. Publica el resultado como comentario en el ticket.
@@ -53,6 +54,7 @@ Sigue el **[tutorial completo](docs/09-tutorial.md)**: del ticket a las ramas li
 | 15 | [Backlog y bucle](docs/15-backlog-y-bucle.md) | Carpeta, GitHub, Azure DevOps; modos manual/supervised/auto; fusión verificada |
 | 16 | [Runtimes](docs/16-runtimes.md) | Claude, Copilot, pi, Codex y OpenCode por paso y por juez; qué aísla cada uno; puente MCP |
 | 17 | [Sandbox](docs/17-sandbox.md) | Ejecutar todo aislado: contenedor, proxy con allowlist, credenciales, herramientas de tus componentes |
+| 18 | [Ejecuciones durables](docs/18-ejecuciones-durables.md) | Reintentos, checkpoints, `resume` y reanudación automática en el bucle |
 
 ## El ciclo
 
@@ -88,6 +90,7 @@ VERIFICACIÓN
 | `status` / `approve <ID>` / `reject <ID>` / `requeue <ID>` | Estado y revisión de los tickets del bucle | No |
 | `memory --repo <r> [list \| search … \| forget …]` | Consulta y edita la memoria del repo | No |
 | `models --repo <r> copilot\|pi` | Lista los ids de modelo de Copilot o de pi | No |
+| `resume --repo <r> --ticket-id <ID> [--fresh-budgets]` | Continúa una ejecución interrumpida, fallida o `needs_human` | Sí |
 | `usage --repo <r> [--by model\|step\|ticket\|day…]` | Tokens consumidos (entrada, caché, salida, razonamiento) y costo | No |
 
 Códigos de salida de `run`: `0` completed · `3` needs_human · `1` failed.

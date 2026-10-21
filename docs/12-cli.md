@@ -5,7 +5,7 @@ npm run flow -- <comando> [opciones]     # sin compilar, desde la carpeta de hec
 hector-flow <comando> [opciones]         # tras npm run build && npm link
 ```
 
-Comandos: `check`, `run`, `distill`, `clean`, `skills`, `start`, `status`, `approve`, `reject`, `requeue`, `memory`, `models`, `usage`.
+Comandos: `check`, `run`, `resume`, `distill`, `clean`, `skills`, `start`, `status`, `approve`, `reject`, `requeue`, `memory`, `models`, `usage`.
 
 Las rutas relativas de `--repo`, `--ticket` y `--config` se resuelven desde la carpeta **donde escribiste el comando**, también con `npm run flow` (que internamente cambia a la carpeta de hector-flow; se usa la variable `INIT_CWD` que npm define con la carpeta original). Las rutas con `~` las expande tu shell.
 
@@ -39,7 +39,7 @@ Comprueba, en orden:
 5. Que `buildCommand`, `testCommand` y `lintCommand` de cada componente **pasan sobre el código actual**.
 6. Qué skills de pasos están personalizadas, y sus avisos (⚠).
 7. Que existen las carpetas de `pluginDirs`, y cuántos jueces revisan si hay más de uno.
-8. Qué variables con aspecto de credencial se quitarán del entorno de los comandos de build/test (`commandEnv`), si se está ejecutando dentro del sandbox y con qué proxy (✖ si falta), y un aviso (⚠) si no hay sandbox y el modo es `auto`, hay pasos en Codex o los tickets vienen de GitHub o Azure DevOps.
+8. Con `memory.backend: "engram"`, que `engram mcp` arranca y ofrece `mem_search` y `mem_save` (✖ si no). Además, qué variables con aspecto de credencial se quitarán del entorno de los comandos de build/test (`commandEnv`), si se está ejecutando dentro del sandbox y con qué proxy (✖ si falta), y un aviso (⚠) si no hay sandbox y el modo es `auto`, hay pasos en Codex o los tickets vienen de GitHub o Azure DevOps.
 9. Si algún paso usa otro runtime: qué runtime ejecuta cada paso, que `opencode` está en el PATH (✖ si no), que Copilot tiene sesión iniciada (✖ si no; inicia su runtime unos instantes, sin llamar a ningún modelo), que cada modelo de pi existe y tiene credenciales, que existen `runtime.codex.path` / `runtime.copilot.path` si los defines, y avisos (⚠) de lo que Codex no aplica y de servidores SSE que Codex no soporta. Ver [16-runtimes.md](16-runtimes.md).
 10. Que el ticket se puede leer y tiene criterios.
 
@@ -75,6 +75,21 @@ Assumptions the workers made without an authoritative answer — check these:   
 ```
 
 Códigos de salida: `0` completed, `3` needs_human, `1` failed. Qué hace paso a paso: [05-flujo.md](05-flujo.md).
+
+## `resume`
+
+Continúa la ejecución más reciente de un ticket que no terminó en `completed`: interrumpida (el proceso murió), `failed` o `needs_human`. Usa las mismas ramas y worktrees, descarta lo que quedó sin commitear y salta las fases y tareas terminadas. Detalles en [18-ejecuciones-durables.md](18-ejecuciones-durables.md).
+
+```bash
+npm run flow -- resume --repo <ruta> --ticket-id <ID> [--fresh-budgets]
+```
+
+| Opción | Descripción |
+|---|---|
+| `--ticket-id` | El ticket. No hace falta el archivo: se usa el ticket tal como era cuando empezó la ejecución. |
+| `--fresh-budgets` | Pone a cero los contadores de reparaciones, rondas de revisión y reintentos del mismo worker (útil tras un `needs_human` por agotarlos, una vez corregida la causa). |
+
+Muestra el mismo resumen y devuelve los mismos códigos que `run`. Si no hay nada que reanudar: `No interrupted, failed or needs_human run of <ID> to resume` (código 1).
 
 ## `distill`
 

@@ -1,6 +1,6 @@
 {
   "name": "hector-flow",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Programmatic AI coding flow: TypeScript controls the workflow, agents only reason inside each step.",
   "type": "module",
   "bin": {
@@ -11,14 +11,16 @@
     "typecheck": "tsc --noEmit",
     "flow": "tsx src/cli.ts",
     "tutorial:setup": "node scripts/setup-tutorial.mjs",
-    "test": "tsx test/runner-policy.ts && tsx test/runtimes.ts && tsx test/pi.ts && tsx test/usage.ts && tsx test/sandbox.ts && tsx test/e2e.ts && tsx test/loop.ts && tsx test/tutorial.ts",
+    "test": "tsx test/runner-policy.ts && tsx test/runtimes.ts && tsx test/pi.ts && tsx test/usage.ts && tsx test/sandbox.ts && tsx test/durable.ts && tsx test/engram.ts && tsx test/e2e.ts && tsx test/loop.ts && tsx test/tutorial.ts",
     "test:loop": "tsx test/loop.ts",
     "test:tutorial": "tsx test/tutorial.ts",
     "test:e2e": "tsx test/e2e.ts",
     "test:runtimes": "tsx test/runtimes.ts",
     "test:usage": "tsx test/usage.ts",
     "test:sandbox": "tsx test/sandbox.ts",
-    "test:pi": "tsx test/pi.ts"
+    "test:pi": "tsx test/pi.ts",
+    "test:durable": "tsx test/durable.ts",
+    "test:engram": "tsx test/engram.ts"
   },
   "engines": {
     "node": ">=20"

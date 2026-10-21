@@ -39,7 +39,7 @@ Invalid config at /Users/tu/mi-repo/hector-flow.config.json:
   "readDenyPaths": ["**/.env", "…"],
 
   // Memoria y MCP
-  "memory": { "enabled": true, "search": ["…"], "save": ["…"], "injectIntoEnrich": 5 },
+  "memory": { "enabled": true, "search": ["…"], "save": ["…"], "injectIntoEnrich": 5, "backend": "local" },
   "mcpServers": { "<nombre>": { /* servidor */ } },
   "mcpAccess": { "<rol>": ["<nombre>"] },
 
@@ -290,6 +290,8 @@ Si defines `readDenyPaths`, **reemplaza** la lista completa: copia la de arriba 
 | `search` | `enrich`, `plan`, `testAuthor`, `coder`, `diagnose`, `review`, `lead` | Pasos que pueden buscar. |
 | `save` | `enrich`, `coder`, `diagnose` | Pasos que pueden guardar. |
 | `injectIntoEnrich` | `5` | Memorias relevantes que recibe `enrich` al empezar. `0` lo desactiva. |
+| `backend` | `"local"` | `"local"` (archivo JSONL junto a los workspaces) o `"engram"` (la memoria de [Engram](https://github.com/Gentleman-Programming/engram), compartida con tus otros agentes). |
+| `engram` | ver [14-memoria-y-mcp.md](14-memoria-y-mcp.md#engram) | `command`, `args`, `project`, `dataDir` del servidor `engram mcp`. |
 
 Guía completa: [14-memoria-y-mcp.md](14-memoria-y-mcp.md).
 
@@ -332,6 +334,8 @@ Ver [15-backlog-y-bucle.md](15-backlog-y-bucle.md).
 | Campo | Tipo | Por defecto | Descripción |
 |---|---|---|---|
 | `maxParallel` | entero ≥ 1 | `3` | Implementadores trabajando a la vez, cada uno en su worktree. |
+| `agentRetries` | entero ≥ 0 | `3` | Reintentos de una llamada a un agente que falla por un motivo transitorio (límite de peticiones, 5xx, red, proceso del agente caído). Ver [18-ejecuciones-durables.md](18-ejecuciones-durables.md). |
+| `agentRetryDelaySeconds` | número ≥ 0 | `10` | Primera espera entre reintentos; se duplica cada vez, hasta 5 minutos. |
 | `repairAttempts` | entero ≥ 0 | `3` | Reparaciones automáticas **en total** por ejecución, sumando todas las rutas (estabilización, revisión, QA). Al agotarse: `needs_human`. |
 | `sameWorkerRetries` | entero ≥ 0 | `2` | Veces que se devuelve trabajo al **mismo** worker (retomando su sesión) antes de pasar a un implementador nuevo. Cuenta compilación fallida en la compuerta, conflictos, defectos de verificación y hallazgos de revisión. |
 | `maxQuestions` | entero ≥ 0 | `10` | Preguntas `ask` por ejecución. Después, los workers deciden solos. |

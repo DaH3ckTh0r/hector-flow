@@ -1,6 +1,7 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createBacklog, type BacklogAdapter, type BacklogItem } from "./backlog.js";
+import { findResumableRun } from "./checkpoint.js";
 import { cleanTicket } from "./clean.js";
 import { resolveComponents } from "./components.js";
 import type { FlowConfig } from "./config.js";
@@ -161,7 +162,9 @@ export async function runLoop(opts: LoopOptions): Promise<LoopResult> {
         if (!reportedSkips.has(s.ref)) log(`  · skipped ${s.ref}: ${s.reason.split("\n")[0]}`);
         reportedSkips.add(s.ref);
       }
-      const next = listing.items.find((i) => !store.get(i.ticket.id));
+      // A ticket still "running" was interrupted (only one loop runs per repo): it goes first.
+      const interrupted = listing.items.find((i) => store.get(i.ticket.id)?.status === "running");
+      const next = interrupted ?? listing.items.find((i) => !store.get(i.ticket.id));
       if (!next) {
         if (opts.once) break;
         log(`  · nothing to do; next check in ${config.loop.intervalSeconds}s`);
@@ -174,7 +177,18 @@ export async function runLoop(opts: LoopOptions): Promise<LoopResult> {
       await store.set({ id: t.id, title: t.title, ref: next.ref, status: "running" });
       let summary: RunSummary;
       try {
-        summary = await implementTicket({ repo: primaryRoot, ticket: t, config, runner });
+        const resumable = interrupted ? await findResumableRun(paths.runs, t.id) : undefined;
+        if (interrupted && resumable) {
+          log(`  · resuming the interrupted run ${resumable.state.runId}`);
+          summary = await implementTicket({ repo: primaryRoot, ticket: t, config, runner, resume: { runDir: resumable.runDir } });
+        } else {
+          if (interrupted) {
+            // Interrupted before its first checkpoint: nothing worth keeping.
+            log(`  · interrupted before any progress was saved; starting it again`);
+            await cleanTicket({ repo: primaryRoot, ticketId: t.id, config });
+          }
+          summary = await implementTicket({ repo: primaryRoot, ticket: t, config, runner });
+        }
       } catch (err) {
         const state = await store.set({ id: t.id, title: t.title, ref: next.ref, status: "failed", reason: (err as Error).message });
         processed.push(state);

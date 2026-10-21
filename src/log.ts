@@ -32,6 +32,12 @@ export class RunLog {
     readonly runId: string,
   ) {}
 
+  /** Continues the log of an existing run (resume). */
+  static async open(runDir: string, runId: string): Promise<RunLog> {
+    await mkdir(join(runDir, "artifacts"), { recursive: true });
+    return new RunLog(runDir, runId);
+  }
+
   static async create(baseDir: string, runId: string): Promise<RunLog> {
     const runDir = join(baseDir, runId);
     await mkdir(join(runDir, "artifacts"), { recursive: true });

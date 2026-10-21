@@ -29,8 +29,21 @@ Primero, siempre:
 | Mensaje | Causa | Solución |
 |---|---|---|
 | `… has uncommitted changes` | Un repo de un componente no está limpio. | Commitea o `git stash`. |
-| `Branch hector/<ID> already exists in …` | Hay una ejecución anterior del ticket. | `clean --ticket-id <ID>`, o fusiona primero lo que quieras conservar. |
+| `Branch hector/<ID> already exists in …` | Hay una ejecución anterior del ticket. | Si se interrumpió o falló: `resume --ticket-id <ID>`. Si no la quieres: `clean --ticket-id <ID>`. |
 | `enrich: Agent failed: …` o `enrich: …` en el primer paso | Normalmente autenticación o red. | Comprueba que `claude` funciona en esa terminal, o que `ANTHROPIC_API_KEY` está exportada. |
+
+## Interrupciones y reanudación
+
+| Mensaje | Causa | Solución |
+|---|---|---|
+| `· <paso>: transient failure, retry n/3 in 10s — …` | Fallo pasajero del proveedor o de la red. | Nada: se reintenta solo. Si pasa a menudo, sube `policy.agentRetryDelaySeconds` o baja `maxParallel`. |
+| `<paso>: 429 …` / `503 …` como motivo de `failed` | Siguió fallando tras todos los reintentos. | Espera y `resume --ticket-id <ID>`. |
+| `No interrupted, failed or needs_human run of <ID> to resume` | La última ejecución terminó bien, o nunca hubo una. | Nada que reanudar; para rehacerlo, `clean` y `run`. |
+| `Cannot resume: <worktree> (<rama>) no longer exists` | Se borró el worktree o la rama de integración (por ejemplo con `clean`). | `clean --ticket-id <ID>` y `run`. |
+| `Cannot resume: component "x" is no longer in the config` | Cambiaste los componentes después de que empezara. | Restaura la config, o `clean` y `run`. |
+| `⚠ guard: discarded uncommitted changes of T2 — …` | Lo que un paso estaba escribiendo cuando se cortó. | Normal: ese paso se repite. |
+| Tras `resume`, `needs_human` otra vez enseguida | Los contadores siguen agotados. | `resume --fresh-budgets` después de corregir la causa. |
+| Un defecto va a un implementador nuevo tras `resume` | El worker estaba en OpenCode o pi (sesiones en memoria) o su worktree ya no existe. | Normal. |
 
 ## Errores de agentes (`failed`)
 
@@ -121,6 +134,8 @@ El flujo se detiene a propósito para que decidas tú. Los worktrees de tarea se
 | `✖ pi knows the model …` / `pi does not know the model …` | El id no está en el catálogo de pi, o falta el proveedor. | `hector-flow models --repo <repo> pi` y usa `"proveedor/modelo"`. |
 | `pi finished without calling submit_result` | El modelo terminó con texto en vez de llamar a la herramienta de resultado. | Reintenta; usa un modelo con buen uso de herramientas, o sube `effort`. |
 | `pi session … is not open in this run` | Se intentó retomar una sesión de pi de otra ejecución. | Las sesiones de pi viven en memoria durante la ejecución; no ocurre en el flujo normal. |
+| `✖ engram memory backend — Could not start …` | `memory.backend` es `engram` y el binario no está o no arranca. | Instala Engram o ajusta `memory.engram.command`; o vuelve a `"local"`. |
+| `engram save failed …` / `memories kept in … because Engram did not accept them` | Engram rechazó o no recibió las memorias al terminar. | Están a salvo en el JSONL local. Revisa `engram doctor`. |
 | Un paso en pi no ve un servidor MCP | Los pasos en pi no cargan MCP. | Ejecuta ese paso en Claude, OpenCode, Copilot o Codex. |
 | `⚠ codex cannot use SSE MCP servers` | Codex solo soporta servidores stdio y HTTP. | Usa la variante HTTP del servidor, o deja ese paso en Claude u OpenCode. |
 | Un juez en otro runtime usa un modelo de Claude por error | `models.review` o el front-matter nombran modelos de Claude y no se aplican fuera de Claude. | Define `model` en el juez o en `runtime.<nombre>.model`. |

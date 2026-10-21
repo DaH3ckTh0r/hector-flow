@@ -175,6 +175,22 @@ export const ConfigSchema = z.object({
       save: z.array(RoleSchema).default(["enrich", "coder", "diagnose"]),
       /** Memories injected into the enrich prompt (most relevant to the ticket). 0 to disable. */
       injectIntoEnrich: z.number().int().min(0).default(5),
+      /**
+       * local: a JSONL file per repo next to the workspaces (default).
+       * engram: Engram's memory, shared with your other agents (needs the engram binary).
+       */
+      backend: z.enum(["local", "engram"]).default("local"),
+      engram: z
+        .object({
+          /** The engram binary. */
+          command: z.string().default("engram"),
+          args: z.array(z.string()).default(["mcp", "--tools=agent"]),
+          /** Engram project name. Default: what Engram detects from the primary repo. */
+          project: z.string().optional(),
+          /** ENGRAM_DATA_DIR (absolute). Default: ~/.engram. */
+          dataDir: z.string().optional(),
+        })
+        .prefault({}),
     })
     .prefault({}),
   /**
@@ -277,6 +293,10 @@ export const ConfigSchema = z.object({
   policy: z
     .object({
       /** Total automatic repairs per run, across every route. */
+      /** Retries of one agent call after a transient failure (rate limit, 5xx, network, crashed agent process). */
+      agentRetries: z.number().int().min(0).default(3),
+      /** First wait before retrying an agent call; doubles each time (with jitter), capped at 5 minutes. */
+      agentRetryDelaySeconds: z.number().min(0).default(10),
       repairAttempts: z.number().int().min(0).default(3),
       /**
        * Times a defect goes back to the worker that wrote the code (resuming

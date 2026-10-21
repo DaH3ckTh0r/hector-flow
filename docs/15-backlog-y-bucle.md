@@ -106,14 +106,14 @@ hector-flow **no hace push**. Después de fusionar, sube la rama base cuando qui
 
 | Estado | Significado | Siguiente acción posible |
 |---|---|---|
-| `running` | En curso | — |
+| `running` | En curso. Si el bucle se detuvo de golpe, el siguiente `start` lo **reanuda primero** ([18-ejecuciones-durables.md](18-ejecuciones-durables.md#en-el-bucle)) | — |
 | `completed` | Terminado (modo `manual`) | `approve`, `reject` |
 | `awaiting_review` | Terminado, esperando decisión | `approve`, `reject` |
 | `merged` | Fusionado | — |
 | `merge_failed` | La fusión falló y se revirtió | `approve` (reintenta), `reject`, `requeue` |
 | `rejected` | Descartado; ramas borradas | `requeue` |
-| `needs_human` | El flujo se detuvo para que decidas | `reject`, `requeue` |
-| `failed` | Error | `reject`, `requeue` |
+| `needs_human` | El flujo se detuvo para que decidas | `resume` (CLI), `reject`, `requeue` |
+| `failed` | Error | `resume` (CLI), `reject`, `requeue` |
 
 **Un ticket con estado nunca se vuelve a tomar** hasta que ejecutes `requeue`. Así, un fallo no se convierte en un bucle de reintentos que consume presupuesto.
 

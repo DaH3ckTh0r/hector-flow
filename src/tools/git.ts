@@ -28,7 +28,8 @@ export async function assertClean(repoRoot: string): Promise<void> {
 export async function addWorktree(repoRoot: string, path: string, branch: string, startRef: string): Promise<Workspace> {
   if (await git(repoRoot, "branch", "--list", branch)) {
     throw new Error(
-      `Branch ${branch} already exists in ${repoRoot}. Remove it (git worktree remove <path> && git branch -D ${branch}) or rename the ticket.`,
+      `Branch ${branch} already exists in ${repoRoot}. If a run of this ticket was interrupted, \`hector-flow resume --ticket-id <ID>\` continues it; ` +
+        `otherwise \`hector-flow clean --ticket-id <ID>\` removes it (or: git worktree remove <path> && git branch -D ${branch}).`,
     );
   }
   await mkdir(dirname(path), { recursive: true });
@@ -40,6 +41,23 @@ export async function addWorktree(repoRoot: string, path: string, branch: string
 export async function removeWorktree(repoRoot: string, ws: Workspace): Promise<void> {
   await git(repoRoot, "worktree", "remove", "--force", ws.path).catch(() => undefined);
   await git(repoRoot, "branch", "-D", ws.branch).catch(() => undefined);
+}
+
+export async function branchExists(repoRoot: string, branch: string): Promise<boolean> {
+  return !!(await git(repoRoot, "branch", "--list", branch).catch(() => ""));
+}
+
+/**
+ * Throws away what an interrupted step left uncommitted in a worktree: an
+ * unfinished merge, edits and new files (ignored files such as node_modules stay).
+ * Everything the flow committed is kept.
+ */
+export async function resetWorktree(cwd: string): Promise<string[]> {
+  const dirty = await changedFiles(cwd, "HEAD").catch(() => [] as string[]);
+  await git(cwd, "merge", "--abort").catch(() => undefined);
+  await git(cwd, "reset", "--hard", "HEAD");
+  await git(cwd, "clean", "-fd");
+  return dirty;
 }
 
 /** Files changed in the worktree since `ref`, including untracked files. */

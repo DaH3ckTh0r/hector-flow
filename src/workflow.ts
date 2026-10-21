@@ -1,12 +1,13 @@
 import { basename, dirname, join, posix, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import type { z } from "zod";
 import { resolveComponents, type Component } from "./components.js";
 import type { Effort, FlowConfig, Role } from "./config.js";
 import { isCommandAllowed, PathPolicy } from "./guards.js";
 import { LessonStore, type ErrorLesson } from "./lessons.js";
-import { MemoryStore, renderMemories } from "./memory.js";
+import { openMemory, type PendingMemory } from "./memory-backend.js";
 import { RunLog } from "./log.js";
 import { KeyedMutex } from "./mutex.js";
 import {
@@ -19,6 +20,8 @@ import {
 } from "./prompts.js";
 import type { AgentMode, AgentRequest, AgentResult, AgentRunner, AgentScope } from "./runner/agent-runner.js";
 import { runDag, validateDag } from "./scheduler.js";
+import { loadState, saveState, type RunState } from "./checkpoint.js";
+import { isTransient, retryDelayMs } from "./retry.js";
 import { resolveRuntime } from "./runtimes.js";
 import { commandEnv } from "./tools/env.js";
 import { addCounts, emptyCounts, type TokenCounts, type Usage } from "./usage.js";
@@ -45,6 +48,7 @@ import {
   abortMerge,
   addWorktree,
   assertClean,
+  branchExists,
   changedFiles,
   commitAll,
   commitFiles,
@@ -54,6 +58,7 @@ import {
   git,
   merge,
   removeWorktree,
+  resetWorktree,
   restoreFiles,
   type Workspace,
 } from "./tools/git.js";
@@ -195,43 +200,107 @@ export async function implementTicket(opts: {
   ticket: Ticket;
   config: FlowConfig;
   runner: AgentRunner;
+  /**
+   * Continue an interrupted (or failed / needs_human) run instead of starting
+   * over: same run folder, branches and worktrees; finished phases and
+   * integrated tasks are skipped. freshBudgets resets the repair, review and
+   * same-worker counters.
+   */
+  resume?: { runDir: string; freshBudgets?: boolean };
 }): Promise<RunSummary> {
-  const { ticket, config, runner } = opts;
+  const { config, runner } = opts;
   const started = Date.now();
   const primaryRoot = await git(resolve(opts.repo), "rev-parse", "--show-toplevel");
   const paths = flowPaths(primaryRoot, config);
+  const prior = opts.resume ? await loadState(opts.resume.runDir) : undefined;
+  if (opts.resume && !prior) throw new Error(`No state.json in ${opts.resume.runDir}: that run cannot be resumed.`);
+  if (prior?.status === "completed") throw new Error(`Run ${prior.runId} already completed; nothing to resume.`);
+  if (prior && prior.ticket.id !== opts.ticket.id) throw new Error(`Run ${prior.runId} belongs to ${prior.ticket.id}, not ${opts.ticket.id}.`);
+  // On resume the ticket is the one the run started with, even if the file changed since.
+  const ticket = prior?.ticket ?? opts.ticket;
   const ticketDir = join(paths.root, ticket.id);
-  const runId = `${ticket.id}-${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 6)}`;
-  const log = await RunLog.create(paths.runs, runId);
+  const runId = prior?.runId ?? `${ticket.id}-${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 6)}`;
+  const log = prior ? await RunLog.open(opts.resume!.runDir, runId) : await RunLog.create(paths.runs, runId);
+  const fresh = !!opts.resume?.freshBudgets;
   const lessons = await LessonStore.open(paths.lessons);
-  const memory = await MemoryStore.open(paths.memory);
-  let memoriesSaved = 0;
+  const memory = await openMemory(config, {
+    primaryRoot,
+    localFile: paths.memory,
+    restored: (prior?.pendingMemories ?? []) as PendingMemory[],
+    log: (message) => void log.emit({ type: "info", message }),
+  });
+  let memoriesSaved = prior?.counters.memoriesSaved ?? 0;
   const pluginPaths = config.pluginDirs.map((d) => resolve(primaryRoot, d));
   let skillSet: SkillSet | undefined;
   const repoLock = new KeyedMutex();
 
   // Commands the flow runs execute agent-written code: no credentials in their environment.
   const { env: cmdEnv } = commandEnv(config);
-  let costUsd = 0;
-  const usageByModel: Record<string, TokenCounts> = {};
-  const usageByRuntime: Record<string, TokenCounts> = {};
+  let costUsd = prior?.costUsd ?? 0;
+  const usageByModel: Record<string, TokenCounts> = prior?.usage.byModel ?? {};
+  const usageByRuntime: Record<string, TokenCounts> = prior?.usage.byRuntime ?? {};
   const recordUsage = (runtime: string, usage: Usage | undefined) => {
     for (const [model, c] of Object.entries(usage ?? {})) {
       addCounts((usageByModel[`${model} (${runtime})`] ??= emptyCounts()), c);
       addCounts((usageByRuntime[runtime] ??= emptyCounts()), c);
     }
   };
-  let repairAttempts = 0;
-  let reviewRounds = 0;
+  let repairAttempts = fresh ? 0 : (prior?.counters.repairAttempts ?? 0);
+  let reviewRounds = fresh ? 0 : (prior?.counters.reviewRounds ?? 0);
   let activeWorkers = 0;
-  let maxConcurrentWorkers = 0;
-  let research: Discovery | undefined;
-  let plan: Plan | undefined;
+  let maxConcurrentWorkers = prior?.counters.maxConcurrentWorkers ?? 0;
+  let research: Discovery | undefined = prior?.research;
+  let plan: Plan | undefined = prior?.plan;
+  let acceptance: Array<AcceptanceCheck & { component: string }> | undefined = prior?.acceptance;
+  let finalReview: Review | undefined = prior?.review;
   const repos = new Map<string, RepoState>();
   const comps: Comp[] = [];
-  const ledger: LedgerEntry[] = [];
+  const ledger: LedgerEntry[] = prior?.ledger ?? [];
   const workers: Worker[] = [];
-  const questions: QuestionRecord[] = [];
+  const questions: QuestionRecord[] = prior?.questions ?? [];
+  let status: RunState["status"] = "running";
+  let statusReason: string | undefined;
+  const stateLock = new KeyedMutex();
+
+  /** Writes state.json: how far the run got. Called after every step. */
+  const checkpoint = () =>
+    stateLock.run("state", () =>
+      saveState(log.runDir, {
+        version: 1,
+        runId,
+        ticket,
+        status,
+        reason: statusReason,
+        elapsedMs: (prior?.elapsedMs ?? 0) + (Date.now() - started),
+        resumes: (prior?.resumes ?? 0) + (prior ? 1 : 0),
+        research,
+        plan,
+        acceptance,
+        repos: [...repos.values()].map((r) => ({
+          root: r.root,
+          name: r.name,
+          integration: r.integration,
+          baseBranch: r.baseBranch,
+          testsRef: r.testsRef,
+        })),
+        tasks: workers.map((w) => ({
+          taskId: w.taskId,
+          component: w.comp.name,
+          ws: w.ws,
+          sessionId: w.sessionId,
+          files: [...w.files],
+          resumes: w.resumes,
+          integrated: w.integrated,
+        })),
+        review: finalReview,
+        ledger,
+        questions,
+        counters: { repairAttempts, reviewRounds, maxConcurrentWorkers, memoriesSaved },
+        costUsd,
+        usage: { byModel: usageByModel, byRuntime: usageByRuntime },
+        pendingMemories: memory.pending(),
+      }),
+    );
 
   const repoSummaries = (): RepoSummary[] =>
     [...repos.values()].map((r) => ({
@@ -268,7 +337,7 @@ export async function implementTicket(opts: {
         byModel: usageByModel,
         byRuntime: usageByRuntime,
       },
-      durationMs: Date.now() - started,
+      durationMs: (prior?.elapsedMs ?? 0) + (Date.now() - started),
       runDir: log.runDir,
     };
   };
@@ -299,8 +368,8 @@ export async function implementTicket(opts: {
     const tools: NonNullable<AgentRequest<z.ZodType>["memory"]> = {};
     if (config.memory.search.includes(role)) {
       tools.search = async (query, limit) => {
-        const hits = memory.search(query, { limit: limit ?? 5, runId });
-        return hits.length ? renderMemories(hits) : "No memories match. Try other keywords, or continue without.";
+        const found = await memory.search(query, { limit: limit ?? 5, runId });
+        return found || "No memories match. Try other keywords, or continue without.";
       };
     }
     if (config.memory.save.includes(role)) {
@@ -315,9 +384,10 @@ export async function implementTicket(opts: {
           runId,
           role,
         });
-        if (e.runId === runId) {
+        if (!e.duplicate) {
           memoriesSaved++;
-          await log.emit({ type: "info", message: `memory saved by ${step}: [${e.kind}] ${e.title} (${e.id})` });
+          await log.emit({ type: "info", message: `memory saved by ${step}: [${input.kind}] ${input.title} (${e.id})` });
+          await checkpoint();
           return `Saved as memory ${e.id}. It becomes permanent if this run completes.`;
         }
         return `Already known (memory ${e.id}); not saved again.`;
@@ -344,60 +414,74 @@ export async function implementTicket(opts: {
     const { attempt } = extra;
     const stepSkill = resolveStep(skillSet!, role, config);
     const choice = resolveRuntime(config, role, stepSkill, extra.judge);
-    await log.emit({ type: "step.start", step, attempt, ...(choice.runtime !== "claude" ? { runtime: choice.runtime } : {}) });
-    const t0 = Date.now();
-    try {
-      const res = await runner.run({
-        role,
-        mode,
-        cwd: dirOf(place),
-        systemPrompt: systemPrompt(stepSkill.instructions, lessons.guidelinesFor(role)),
-        prompt,
-        schema,
-        resumeSessionId: extra.resumeSessionId,
-        ask: extra.ask,
-        scope: scopeFor(place),
-        readDirs: readDirsFor(place),
-        runtime: choice.runtime,
-        model: choice.model,
-        effort: choice.effort,
-        claudeSkills: stepSkill.claudeSkills,
-        plugins: pluginPaths,
-        memory: memoryToolsFor(role, step),
-        mcpServers: config.mcpAccess[role] ?? [],
-      });
-      costUsd += res.costUsd;
-      recordUsage(choice.runtime, res.usage);
-      for (const d of res.denials) await log.emit({ type: "guard", step, action: `denied ${d.tool}`, detail: d.reason });
-      await log.artifact(`${step}${attempt ? `-${attempt}` : ""}.json`, res.output);
-      await log.emit({
-        type: "step.end",
-        step,
-        ok: true,
-        durationMs: Date.now() - t0,
-        costUsd: res.costUsd,
-        attempt,
-        role,
-        runtime: choice.runtime,
-        usage: res.usage,
-      });
-      return res;
-    } catch (err) {
-      const failed = err as { costUsd?: number; usage?: Usage };
-      costUsd += failed.costUsd ?? 0;
-      recordUsage(choice.runtime, failed.usage);
-      await log.emit({
-        type: "step.end",
-        step,
-        ok: false,
-        durationMs: Date.now() - t0,
-        costUsd: failed.costUsd,
-        attempt,
-        role,
-        runtime: choice.runtime,
-        usage: failed.usage,
-      });
-      throw new StopFlow("failed", `${step}: ${(err as Error).message}`);
+    for (let retry = 0; ; retry++) {
+      await log.emit({ type: "step.start", step, attempt, ...(choice.runtime !== "claude" ? { runtime: choice.runtime } : {}) });
+      const t0 = Date.now();
+      try {
+        const res = await runner.run({
+          role,
+          mode,
+          cwd: dirOf(place),
+          systemPrompt: systemPrompt(stepSkill.instructions, lessons.guidelinesFor(role)),
+          prompt,
+          schema,
+          resumeSessionId: extra.resumeSessionId,
+          ask: extra.ask,
+          scope: scopeFor(place),
+          readDirs: readDirsFor(place),
+          runtime: choice.runtime,
+          model: choice.model,
+          effort: choice.effort,
+          claudeSkills: stepSkill.claudeSkills,
+          plugins: pluginPaths,
+          memory: memoryToolsFor(role, step),
+          mcpServers: config.mcpAccess[role] ?? [],
+        });
+        costUsd += res.costUsd;
+        recordUsage(choice.runtime, res.usage);
+        for (const d of res.denials) await log.emit({ type: "guard", step, action: `denied ${d.tool}`, detail: d.reason });
+        await log.artifact(`${step}${attempt ? `-${attempt}` : ""}.json`, res.output);
+        await log.emit({
+          type: "step.end",
+          step,
+          ok: true,
+          durationMs: Date.now() - t0,
+          costUsd: res.costUsd,
+          attempt,
+          role,
+          runtime: choice.runtime,
+          usage: res.usage,
+        });
+        await checkpoint();
+        return res;
+      } catch (err) {
+        const failed = err as { costUsd?: number; usage?: Usage };
+        costUsd += failed.costUsd ?? 0;
+        recordUsage(choice.runtime, failed.usage);
+        await log.emit({
+          type: "step.end",
+          step,
+          ok: false,
+          durationMs: Date.now() - t0,
+          costUsd: failed.costUsd,
+          attempt,
+          role,
+          runtime: choice.runtime,
+          usage: failed.usage,
+        });
+        // Transient failures (rate limits, 5xx, network, a crashed agent process) get the same call again.
+        if (retry < config.policy.agentRetries && isTransient(err)) {
+          const wait = retryDelayMs(retry + 1, config.policy.agentRetryDelaySeconds);
+          await log.emit({
+            type: "info",
+            message: `${step}: transient failure, retry ${retry + 1}/${config.policy.agentRetries} in ${Math.round(wait / 1000)}s — ${(err as Error).message.split("\n")[0]}`,
+          });
+          await new Promise((r) => setTimeout(r, wait));
+          continue;
+        }
+        await checkpoint();
+        throw new StopFlow("failed", `${step}: ${(err as Error).message}`);
+      }
     }
   }
 
@@ -436,6 +520,7 @@ export async function implementTicket(opts: {
         record.answer = `(no answer: ${(err as Error).message})`;
       }
       await log.artifact("questions.json", questions);
+      await checkpoint();
       return record.confident
         ? `${record.answer}\n(basis: ${record.basis})`
         : `No authoritative answer exists. Lead's suggestion: ${record.answer}\n${decideAlone}`;
@@ -548,6 +633,7 @@ export async function implementTicket(opts: {
       if (res.sessionId) o.worker.sessionId = res.sessionId;
       entry?.files.forEach((f) => o.worker!.files.add(f));
     }
+    await checkpoint();
     return res.output;
   }
 
@@ -572,6 +658,7 @@ export async function implementTicket(opts: {
       if (res.ok) {
         w.integrated = true;
         await log.emit({ type: "info", message: `integrated ${w.taskId} into ${repo.name}:${repo.integration.branch}` });
+        await checkpoint();
         return;
       }
 
@@ -640,21 +727,41 @@ export async function implementTicket(opts: {
   async function runTask(task: PlanTask): Promise<void> {
     const comp = compByName(task.component);
     const repo = comp.repo;
-    const ws = await repoLock.run(repo.root, () =>
-      addWorktree(repo.root, join(ticketDir, "_tasks", task.id), `hector-tasks/${ticket.id}/${task.id}`, repo.integration.branch),
-    );
-    const worker: Worker = { taskId: task.id, comp, ws, files: new Set(), resumes: 0, integrated: false };
-    workers.push(worker);
+    const existing = workers.find((w) => w.taskId === task.id);
+    if (existing?.integrated) {
+      await log.emit({ type: "info", message: `${task.id} was integrated before the interruption; skipped` });
+      return;
+    }
+    let worker = existing;
+    if (!worker) {
+      const path = join(ticketDir, "_tasks", task.id);
+      const branch = `hector-tasks/${ticket.id}/${task.id}`;
+      const ws = await repoLock.run(repo.root, async () => {
+        // Created just before a crash, before any checkpoint recorded it: start that task over.
+        if (prior && (await branchExists(repo.root, branch))) {
+          await git(repo.root, "worktree", "prune").catch(() => undefined);
+          await removeWorktree(repo.root, { path, branch, baseRef: "" });
+        }
+        return addWorktree(repo.root, path, branch, repo.integration.branch);
+      });
+      worker = { taskId: task.id, comp, ws, files: new Set(), resumes: 0, integrated: false };
+      workers.push(worker);
+      await checkpoint();
+    }
     activeWorkers++;
     maxConcurrentWorkers = Math.max(maxConcurrentWorkers, activeWorkers);
     try {
-      await editStep({
-        place: workerPlace(worker),
-        step: `implement-${task.id}`,
-        description: `${task.id} ${task.description}`,
-        prompt: prompts.coder(ticket, plan!, task, ledger, comp.info, comps.filter((c) => c !== comp).map((c) => c.info)),
-        worker,
-      });
+      if (ledger.some((e) => e.step === `implement-${task.id}`)) {
+        await log.emit({ type: "info", message: `${task.id}: implementation was committed before the interruption; continuing with its build gate` });
+      } else {
+        await editStep({
+          place: workerPlace(worker),
+          step: `implement-${task.id}`,
+          description: `${task.id} ${task.description}`,
+          prompt: prompts.coder(ticket, plan!, task, ledger, comp.info, comps.filter((c) => c !== comp).map((c) => c.info)),
+          worker,
+        });
+      }
 
       // Build gate in the worker's own worktree: compile errors are always the worker's.
       const gateCmds = commandsOf(comp, ["build", "lint"]);
@@ -817,6 +924,7 @@ export async function implementTicket(opts: {
   }
 
   try {
+    await checkpoint();
     // ── Step skills ──────────────────────────────────────────────────────
     skillSet = await loadSkills(primaryRoot, config);
     for (const s of Object.values(skillSet.skills)) {
@@ -829,15 +937,40 @@ export async function implementTicket(opts: {
 
     // ── Workspaces ───────────────────────────────────────────────────────
     const resolved = await resolveComponents(primaryRoot, config);
-    for (const root of new Set(resolved.map((c) => c.repoRoot))) await assertClean(root);
+    const savedRepos = new Map((prior?.repos ?? []).map((r) => [r.root, r]));
+    for (const root of new Set(resolved.map((c) => c.repoRoot))) if (!savedRepos.has(root)) await assertClean(root);
     for (const c of resolved) {
       let repo = repos.get(c.repoRoot);
       if (!repo) {
-        const integration = await addWorktree(c.repoRoot, join(ticketDir, c.repoName), `hector/${ticket.id}`, "HEAD");
-        const baseBranch = await git(c.repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD").catch(() => undefined);
-        repo = { root: c.repoRoot, name: c.repoName, integration, lockedPaths: [], baseBranch };
+        const saved = savedRepos.get(c.repoRoot);
+        if (saved) {
+          // Resume: the integration worktree is where the run left it, minus uncommitted leftovers.
+          if (!existsSync(saved.integration.path) || !(await branchExists(c.repoRoot, saved.integration.branch))) {
+            throw new StopFlow(
+              "failed",
+              `Cannot resume: ${saved.integration.path} (${saved.integration.branch}) no longer exists. Run \`hector-flow clean --ticket-id ${ticket.id}\` and start the ticket again.`,
+            );
+          }
+          const dropped = await resetWorktree(saved.integration.path);
+          if (dropped.length) {
+            await log.emit({ type: "guard", step: "resume", action: `discarded uncommitted changes in ${saved.name}`, detail: dropped.join(", ") });
+          }
+          repo = { root: c.repoRoot, name: saved.name, integration: saved.integration, lockedPaths: [], baseBranch: saved.baseBranch, testsRef: saved.testsRef };
+        } else {
+          const branch = `hector/${ticket.id}`;
+          const path = join(ticketDir, c.repoName);
+          if (prior && (await branchExists(c.repoRoot, branch))) {
+            // Created just before a crash, before any checkpoint recorded it.
+            await git(c.repoRoot, "worktree", "prune").catch(() => undefined);
+            await removeWorktree(c.repoRoot, { path, branch, baseRef: "" });
+          }
+          const integration = await addWorktree(c.repoRoot, path, branch, "HEAD");
+          const baseBranch = await git(c.repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD").catch(() => undefined);
+          repo = { root: c.repoRoot, name: c.repoName, integration, lockedPaths: [], baseBranch };
+          await log.emit({ type: "info", message: `integration worktree ${integration.path} on ${integration.branch}` });
+        }
         repos.set(c.repoRoot, repo);
-        await log.emit({ type: "info", message: `integration worktree ${integration.path} on ${integration.branch}` });
+        await checkpoint();
       }
       repo.lockedPaths.push(...c.lockedPaths);
       const dir = c.path === "." ? repo.integration.path : join(repo.integration.path, c.path);
@@ -856,20 +989,52 @@ export async function implementTicket(opts: {
       });
     }
     await log.artifact("ticket.md", ticket.body);
+    if (prior) {
+      // Workers keep their sessions only on runtimes that store them on disk (Claude, Codex, Copilot).
+      const coderRuntime = resolveRuntime(config, "coder", resolveStep(skillSet, "coder", config)).runtime;
+      const sessionsSurvive = coderRuntime !== "opencode" && coderRuntime !== "pi";
+      for (const t of prior.tasks) {
+        const comp = comps.find((c) => c.name === t.component);
+        if (!comp) throw new StopFlow("failed", `Cannot resume: component "${t.component}" is no longer in the config.`);
+        const alive = existsSync(t.ws.path) && (await branchExists(comp.repoRoot, t.ws.branch));
+        if (!alive && !t.integrated) continue; // never got past creation: runTask starts it again
+        if (alive) {
+          const dropped = await resetWorktree(t.ws.path);
+          if (dropped.length) await log.emit({ type: "guard", step: "resume", action: `discarded uncommitted changes of ${t.taskId}`, detail: dropped.join(", ") });
+        }
+        workers.push({
+          taskId: t.taskId,
+          comp,
+          ws: t.ws,
+          sessionId: sessionsSurvive && alive ? t.sessionId : undefined,
+          files: new Set(t.files),
+          // A worker without its worktree cannot take defects back: they go to a fresh implementer.
+          resumes: !alive ? config.policy.sameWorkerRetries : fresh ? 0 : t.resumes,
+          integrated: t.integrated,
+        });
+      }
+      const done = workers.filter((w) => w.integrated).length;
+      await log.emit({
+        type: "info",
+        message: `resuming run ${runId} (resume ${prior.resumes + 1}): ${research && plan ? "plan ready" : "research pending"}, ${acceptance ? "tests committed" : "tests pending"}, ${done}/${plan?.tasks.length ?? "?"} tasks integrated${fresh ? ", fresh budgets" : ""}`,
+      });
+    }
     const primary = home(comps[0]!);
     const infos = comps.map((c) => c.info);
 
     // ── RESEARCH ─────────────────────────────────────────────────────────
-    const recalled =
-      config.memory.enabled && config.memory.injectIntoEnrich > 0
-        ? memory.search([ticket.title, ...ticket.acceptanceCriteria].join(" "), { limit: config.memory.injectIntoEnrich })
-        : [];
-    if (recalled.length) await log.emit({ type: "info", message: `recalled ${recalled.length} memories for enrich` });
-    research = await agent("enrich", "enrich", primary, prompts.enrich(ticket, infos, renderMemories(recalled)), DiscoverySchema);
-    if (research.openQuestions.length) {
-      await log.emit({ type: "info", message: "open questions (continuing autonomously)", data: research.openQuestions });
+    if (!research) {
+      const recalled =
+        config.memory.enabled && config.memory.injectIntoEnrich > 0
+          ? await memory.search([ticket.title, ...ticket.acceptanceCriteria].join(" "), { limit: config.memory.injectIntoEnrich, runId })
+          : "";
+      if (recalled) await log.emit({ type: "info", message: `recalled memories for enrich (${memory.kind})` });
+      research = await agent("enrich", "enrich", primary, prompts.enrich(ticket, infos, recalled), DiscoverySchema);
+      if (research.openQuestions.length) {
+        await log.emit({ type: "info", message: "open questions (continuing autonomously)", data: research.openQuestions });
+      }
     }
-    plan = await agent("plan", "plan", primary, prompts.plan(ticket, research, infos), PlanSchema);
+    if (!plan) plan = await agent("plan", "plan", primary, prompts.plan(ticket, research, infos), PlanSchema);
     for (const t of plan.tasks) compByName(t.component);
     try {
       validateDag(plan.tasks);
@@ -880,7 +1045,18 @@ export async function implementTicket(opts: {
     const involved = comps.filter((c) => plan!.tasks.some((t) => t.component === c.name));
 
     // Locked tests and acceptance map, component by component.
-    const acceptance: Array<AcceptanceCheck & { component: string }> = [];
+    if (acceptance && [...repos.values()].every((r) => r.testsRef)) {
+      await log.emit({ type: "info", message: "locked tests were committed before the interruption; skipped" });
+    } else {
+    if (prior) {
+      // Tests interrupted half-way: start them over from the base commit (nothing else was committed yet).
+      for (const r of repos.values()) {
+        if (r.testsRef && r.testsRef !== r.integration.baseRef) await git(r.integration.path, "reset", "--hard", r.integration.baseRef);
+        r.testsRef = undefined;
+      }
+      for (let i = ledger.length - 1; i >= 0; i--) if (ledger[i]!.step === "write-tests") ledger.splice(i, 1);
+    }
+    const collected: Array<AcceptanceCheck & { component: string }> = [];
     for (const comp of involved) {
       const authored = (
         await agentFull(`write-tests:${comp.name}`, "testAuthor", "tests", home(comp), prompts.testAuthor(ticket, research, plan, comp.info), TestAuthoringSchema)
@@ -899,12 +1075,12 @@ export async function implementTicket(opts: {
           `Acceptance map for ${comp.name} has commands outside allowedCommands:\n${rejected.map((r) => `- ${r.command}`).join("\n")}`,
         );
       }
-      acceptance.push(...authored.acceptanceMap.map((a) => ({ ...a, component: comp.name })));
+      collected.push(...authored.acceptanceMap.map((a) => ({ ...a, component: comp.name })));
     }
-    if (acceptance.length < ticket.acceptanceCriteria.length) {
+    if (collected.length < ticket.acceptanceCriteria.length) {
       throw new StopFlow(
         "failed",
-        `Acceptance map has ${acceptance.length} checks for ${ticket.acceptanceCriteria.length} acceptance criteria. Every criterion needs a command.`,
+        `Acceptance map has ${collected.length} checks for ${ticket.acceptanceCriteria.length} acceptance criteria. Every criterion needs a command.`,
       );
     }
     for (const repo of repos.values()) {
@@ -929,11 +1105,14 @@ export async function implementTicket(opts: {
     if (!ledger.some((e) => e.step === "write-tests")) {
       throw new StopFlow("failed", "No test files matching lockedPaths were written for any component.");
     }
+    acceptance = collected;
     await log.artifact("acceptance-map.json", acceptance);
     await log.artifact("ledger.json", ledger);
+    await checkpoint();
     for (const comp of involved) {
       const red = await runCommands(`tests-red:${comp.name}`, dirOf(home(comp)), [comp.testCommand]);
       if (red.ok) await log.emit({ type: "info", message: `${comp.name}: tests already pass before implementation — they may not constrain the change` });
+    }
     }
 
     // ── IMPLEMENTATION (parallel) ────────────────────────────────────────
@@ -975,7 +1154,10 @@ export async function implementTicket(opts: {
     }
 
     let review: Review;
-    for (;;) {
+    if (finalReview) {
+      review = finalReview;
+      await log.emit({ type: "info", message: "review finished before the interruption; skipped" });
+    } else for (;;) {
       review = await judgeReview(reviewRounds + 1);
       const serious = review.issues.filter((i) => i.severity !== "minor");
       if (serious.length === 0 || reviewRounds >= config.policy.reviewRounds) break;
@@ -1001,11 +1183,13 @@ export async function implementTicket(opts: {
       }
       for (const comp of involved) await untilGreen(`review-fix:${comp.name}`, comp, fullCheck(comp));
     }
+    finalReview = review;
+    await checkpoint();
 
     // QA: the machine decides if the ticket is done, criterion by criterion.
     const qaReport: Array<{ component: string; criterion: string; command: string; ok: boolean }> = [];
     for (const comp of involved) {
-      const checks = acceptance.filter((a) => a.component === comp.name);
+      const checks = acceptance!.filter((a) => a.component === comp.name);
       if (!checks.length) continue;
       await untilGreen(`qa:${comp.name}`, comp, async () => {
         const failures: string[] = [];
@@ -1023,12 +1207,12 @@ export async function implementTicket(opts: {
     for (const comp of involved) await untilGreen(`final-check:${comp.name}`, comp, fullCheck(comp));
     await log.artifact("qa-report.json", qaReport);
 
-    const qaPlan = await agent("qa-plan", "qaPlan", primary, prompts.qaPlan(ticket, await allDiffs(), acceptance), QaPlanSchema);
+    const qaPlan = await agent("qa-plan", "qaPlan", primary, prompts.qaPlan(ticket, await allDiffs(), acceptance!), QaPlanSchema);
     await log.artifact("test-plan.md", qaPlan.markdown);
 
     const repoInfo = await cleanup(true);
-    const validated = await memory.validateRun(runId);
-    if (validated) await log.emit({ type: "info", message: `${validated} memories from this run validated` });
+    const validated = await memory.commit(runId);
+    if (validated) await log.emit({ type: "info", message: `${validated} memories from this run ${memory.kind === "engram" ? "written to Engram" : "validated"}` });
     const blockers = review.issues.filter((i) => i.severity === "blocker");
     if (blockers.length) {
       return await finish(
@@ -1052,6 +1236,10 @@ export async function implementTicket(opts: {
   }
 
   async function finish(s: RunSummary): Promise<RunSummary> {
+    status = s.status;
+    statusReason = s.reason;
+    await checkpoint().catch(() => undefined);
+    await memory.close();
     const summaryPath = join(log.runDir, "summary.json");
     await writeFile(summaryPath, JSON.stringify(s, null, 2));
     if (config.notifyCommand) {

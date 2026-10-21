@@ -11,11 +11,14 @@ import { createRunner } from "./runtimes.js";
 import { readTicket } from "./ticket.js";
 import { approveTicket, loopStatus, rejectTicket, requeueTicket, runLoop, type LoopMode } from "./loop.js";
 import { MemoryStore, renderMemories } from "./memory.js";
-import { flowPaths, implementTicket } from "./workflow.js";
+import { EngramMemory } from "./memory-backend.js";
+import { flowPaths, implementTicket, type RunSummary } from "./workflow.js";
+import { findResumableRun } from "./checkpoint.js";
 import { addCounts, describeCounts, emptyCounts, fmtTokens, groupUsage, readUsageRecords, sumUsage, totalTokens, type UsageGroup } from "./usage.js";
 
 const USAGE = `hector-flow check   --repo <path> [--ticket <ticket.md>] [--no-commands] [--config <path>]
 hector-flow run     --repo <path> --ticket <ticket.md>                    [--config <path>]
+hector-flow resume  --repo <path> --ticket-id <ID> [--fresh-budgets]      [--config <path>]
 hector-flow distill --repo <path> --ticket-id <ID>                        [--config <path>]
 hector-flow clean   --repo <path> --ticket-id <ID>                        [--config <path>]
 hector-flow skills  --repo <path> [list | eject <role…|all>]              [--config <path>]
@@ -30,6 +33,8 @@ hector-flow usage   --repo <path> [--ticket-id <ID>] [--by model|runtime|step|ro
 
   check    Validates config, repos, each component's commands and the ticket. No model calls.
   run      Implements the ticket: worktrees per task, branches hector/<ID> in every touched repo.
+  resume   Continues the ticket's latest interrupted, failed or needs_human run where it stopped
+           (same branches and worktrees; finished phases and integrated tasks are skipped).
   distill  After you correct the result on those branches, turns your corrections
            into guidelines for the step that caused them.
   clean    Removes the ticket's worktrees and branches (hector/<ID>, hector-tasks/<ID>/*)
@@ -59,11 +64,12 @@ hector-flow usage   --repo <path> [--ticket-id <ID>] [--by model|runtime|step|ro
   --by           usage: how to group (default model)
   --since        usage: only calls on or after this date
   --json         usage: machine-readable output
+  --fresh-budgets resume: reset repair, review and same-worker retry counters
 
 Exit codes: 0 completed/ok · 3 needs_human · 1 failed · 2 usage error
 `;
 
-const COMMANDS = ["check", "run", "distill", "clean", "skills", "start", "status", "approve", "reject", "requeue", "memory", "models", "usage"] as const;
+const COMMANDS = ["check", "run", "distill", "clean", "skills", "start", "status", "approve", "reject", "requeue", "memory", "models", "usage", "resume"] as const;
 type Command = (typeof COMMANDS)[number];
 
 async function main(): Promise<number> {
@@ -83,6 +89,7 @@ async function main(): Promise<number> {
       by: { type: "string" },
       since: { type: "string" },
       json: { type: "boolean" },
+      "fresh-budgets": { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -240,8 +247,23 @@ async function main(): Promise<number> {
 
   if (command === "memory") {
     const primaryRoot = await git(repo, "rev-parse", "--show-toplevel");
-    const store = await MemoryStore.open(flowPaths(primaryRoot, config).memory);
     const sub = positionals[1] ?? "list";
+    if (config.memory.backend === "engram") {
+      if (sub !== "search") {
+        console.log("Memory lives in Engram (memory.backend = engram): use `engram tui`, `engram search` or `engram delete` to browse and edit it.");
+        return sub === "list" ? 0 : 2;
+      }
+      const q = positionals.slice(2).join(" ");
+      if (!q) return (console.log("Usage: hector-flow memory --repo <path> search <words…>"), 2);
+      const engram = new EngramMemory(config.memory.engram, primaryRoot, flowPaths(primaryRoot, config).memory);
+      try {
+        console.log((await engram.search(q, { limit: 10, runId: "-" })) || "No memories match.");
+      } finally {
+        await engram.close();
+      }
+      return 0;
+    }
+    const store = await MemoryStore.open(flowPaths(primaryRoot, config).memory);
     if (sub === "search") {
       const q = positionals.slice(2).join(" ");
       if (!q) return (console.log("Usage: hector-flow memory --repo <path> search <words…>"), 2);
@@ -310,12 +332,38 @@ async function main(): Promise<number> {
       return 0;
     }
 
+    if (command === "resume") {
+      if (!values["ticket-id"]) return (console.log("Usage: hector-flow resume --repo <path> --ticket-id <ID> [--fresh-budgets]"), 2);
+      const primaryRoot = await git(repo, "rev-parse", "--show-toplevel");
+      const found = await findResumableRun(flowPaths(primaryRoot, config).runs, values["ticket-id"]);
+      if (!found) {
+        console.log(`No interrupted, failed or needs_human run of ${values["ticket-id"]} to resume (or its latest run completed).`);
+        return 1;
+      }
+      const s = found.state;
+      console.log(`hector-flow · resuming ${s.ticket.id}: ${s.ticket.title}`);
+      console.log(`run      ${s.runId} (${s.status}${s.reason ? `: ${s.reason.split("\n")[0]}` : ""})\n`);
+      const summary = await implementTicket({
+        repo,
+        ticket: s.ticket,
+        config,
+        runner,
+        resume: { runDir: found.runDir, freshBudgets: values["fresh-budgets"] },
+      });
+      return printSummary(summary);
+    }
+
     if (!values.ticket) return (console.log(USAGE), 2);
     const ticket = await readTicket(at(values.ticket));
     console.log(`hector-flow · ${ticket.id}: ${ticket.title}\n`);
 
-    const summary = await implementTicket({ repo, ticket, config, runner });
+    return printSummary(await implementTicket({ repo, ticket, config, runner }));
+  } finally {
+    await runner.close();
+  }
+}
 
+function printSummary(summary: RunSummary): number {
     console.log(`\n${"─".repeat(60)}`);
     console.log(`status   ${summary.status}`);
     for (const r of summary.repos) console.log(`repo     ${r.name}: ${r.branch} → ${r.worktree}`);
@@ -332,9 +380,6 @@ async function main(): Promise<number> {
     }
 
     return summary.status === "completed" ? 0 : summary.status === "needs_human" ? 3 : 1;
-  } finally {
-    await runner.close();
-  }
 }
 
 main().then(

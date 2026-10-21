@@ -40,16 +40,18 @@ npm run typecheck   # compila sin errores
 npm test            # ~1 minuto, sin llamadas al modelo
 ```
 
-`npm test` ejecuta ocho suites:
+`npm test` ejecuta diez suites:
 
 1. `test/runner-policy.ts`: las reglas de permisos de los agentes.
 2. `test/runtimes.ts`: el puente MCP (con un cliente MCP real) y los runtimes Codex, OpenCode y Copilot con SDK simulados.
 3. `test/pi.ts`: el runtime pi con una sesión real de pi y su modelo simulado.
 4. `test/usage.ts`: el consumo de tokens de cada runtime y los informes de `usage`.
 5. `test/sandbox.ts`: el proxy de salida del sandbox (con sockets reales) y la limpieza de credenciales de los comandos.
-6. `test/e2e.ts`: 18 escenarios del flujo con un runner simulado.
-7. `test/loop.ts`: memoria, acceso MCP, adaptadores de backlog (con HTTP simulado) y el bucle.
-8. `test/tutorial.ts`: el tutorial completo, de punta a punta.
+6. `test/durable.ts`: reintentos y reanudación tras matar el proceso a mitad de una tarea.
+7. `test/engram.ts`: la memoria en Engram (con un servidor que imita su contrato MCP).
+8. `test/e2e.ts`: 18 escenarios del flujo con un runner simulado.
+9. `test/loop.ts`: memoria, acceso MCP, adaptadores de backlog (con HTTP simulado) y el bucle.
+10. `test/tutorial.ts`: el tutorial completo, de punta a punta.
 
 Debe terminar con `tutorial checks passed`.
 

@@ -124,6 +124,7 @@ export async function preflight(opts: {
   }
 
   for (const line of checkSandbox(opts.config)) add(line);
+  if (opts.config.memory.enabled && opts.config.memory.backend === "engram") add(await checkEngram(opts.config, primaryRoot));
   for (const line of await checkRuntimes(opts.config)) add(line);
 
   const b = opts.config.backlog;
@@ -324,6 +325,30 @@ async function onPath(bin: string): Promise<boolean> {
   const dirs = (process.env.PATH ?? "").split(process.platform === "win32" ? ";" : ":");
   const names = process.platform === "win32" ? [`${bin}.cmd`, `${bin}.exe`, bin] : [bin];
   return dirs.some((d) => d && names.some((n) => existsSync(resolve(d, n))));
+}
+
+/** Starts `engram mcp` from the primary repo and confirms it offers mem_search and mem_save. No model call. */
+export async function checkEngram(config: FlowConfig, primaryRoot: string): Promise<CheckLine> {
+  const { EngramMemory } = await import("./memory-backend.js");
+  const engram = new EngramMemory(config.memory.engram, primaryRoot, "/dev/null");
+  try {
+    const tools = await Promise.race([
+      engram.probe(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("no answer in 15s")), 15_000)),
+    ]);
+    const missing = ["mem_search", "mem_save"].filter((t) => !tools.includes(t));
+    return missing.length
+      ? { ok: false, label: "engram memory backend", detail: `\`${config.memory.engram.command} ${config.memory.engram.args.join(" ")}\` does not offer ${missing.join(", ")}. Keep the agent tools profile (--tools=agent).` }
+      : { ok: true, label: `memory: Engram (${config.memory.engram.command} ${config.memory.engram.args.join(" ")})${config.memory.engram.project ? `, project ${config.memory.engram.project}` : ""}` };
+  } catch (err) {
+    return {
+      ok: false,
+      label: "engram memory backend",
+      detail: `Could not start \`${config.memory.engram.command} ${config.memory.engram.args.join(" ")}\`: ${(err as Error).message}. Install Engram (github.com/Gentleman-Programming/engram) or set memory.backend to "local".`,
+    };
+  } finally {
+    await engram.close();
+  }
 }
 
 /** Whether this run is isolated, and what the flow keeps out of the commands it runs. */
