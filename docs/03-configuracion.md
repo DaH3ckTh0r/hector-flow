@@ -350,6 +350,21 @@ Ver [15-backlog-y-bucle.md](15-backlog-y-bucle.md).
 
 ## Varios
 
+### `commandEnv`
+
+```json
+"commandEnv": { "scrubSecrets": true, "keep": ["DB_PASSWORD"] }
+```
+
+Entorno de los comandos que ejecuta el propio flujo: `buildCommand`, `testCommand`, `lintCommand`, los comandos de aceptación, los del plan de QA, los de `check` y las comprobaciones después de fusionar. Esos comandos ejecutan código escrito por agentes, así que por defecto **no reciben ninguna variable con aspecto de credencial**: nombres con `API_KEY`, `ACCESS_KEY`, `SECRET`, `TOKEN`, `PAT`, `PASSWORD`, `CREDENTIALS`, `PRIVATE_KEY`, `AUTH`, `SAS` o `CONNECTION_STRING`, además de la variable `tokenEnv` del backlog y la de `runtime.copilot.tokenEnv`, se llamen como se llamen.
+
+| Campo | Por defecto | Descripción |
+|---|---|---|
+| `scrubSecrets` | `true` | `false` les pasa todo tu entorno. `check` lo advierte. |
+| `keep` | `[]` | Variables que sí deben llegar aunque parezcan credenciales (p. ej. la contraseña de una base de datos de pruebas local). |
+
+`check` lista qué variables quitará. No afecta a `notifyCommand`, que escribes tú. Más en [17-sandbox.md](17-sandbox.md).
+
 ### `notifyCommand` — string, opcional
 
 Comando de shell que se ejecuta al terminar, sea cual sea el estado. Recibe estas variables de entorno:

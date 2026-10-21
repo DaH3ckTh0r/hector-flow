@@ -7,6 +7,7 @@ import { resolveRuntime, runtimesInUse } from "./runtimes.js";
 import { isCommandAllowed } from "./guards.js";
 import { readTicket } from "./ticket.js";
 import { git } from "./tools/git.js";
+import { commandEnv } from "./tools/env.js";
 import { runShell } from "./tools/shell.js";
 
 export interface CheckLine {
@@ -89,7 +90,7 @@ export async function preflight(opts: {
       ["lint", c.lintCommand],
     ] as const) {
       if (!cmd) continue;
-      const r = await runShell(cmd, dir, { timeoutMs: 15 * 60_000, maxChars: 3000 });
+      const r = await runShell(cmd, dir, { timeoutMs: 15 * 60_000, maxChars: 3000, baseEnv: commandEnv(opts.config).env });
       add({
         ok: r.ok,
         label: `${c.name}: ${kind} "${cmd}" passes on the current code (${(r.durationMs / 1000).toFixed(1)}s)`,
@@ -122,6 +123,7 @@ export async function preflight(opts: {
     add({ ok: true, label: `review by ${judges.length} independent judges: ${judges.map((j) => j.name).join(", ")}` });
   }
 
+  for (const line of checkSandbox(opts.config)) add(line);
   for (const line of await checkRuntimes(opts.config)) add(line);
 
   const b = opts.config.backlog;
@@ -270,4 +272,43 @@ async function onPath(bin: string): Promise<boolean> {
   const dirs = (process.env.PATH ?? "").split(process.platform === "win32" ? ";" : ":");
   const names = process.platform === "win32" ? [`${bin}.cmd`, `${bin}.exe`, bin] : [bin];
   return dirs.some((d) => d && names.some((n) => existsSync(resolve(d, n))));
+}
+
+/** Whether this run is isolated, and what the flow keeps out of the commands it runs. */
+export function checkSandbox(config: FlowConfig, env: NodeJS.ProcessEnv = process.env): CheckLine[] {
+  const lines: CheckLine[] = [];
+  const { removed } = commandEnv(config, env);
+  lines.push(
+    config.commandEnv.scrubSecrets
+      ? {
+          ok: true,
+          label: removed.length
+            ? `build/test commands run without ${removed.length} credential variable(s): ${removed.join(", ")}`
+            : "build/test commands: no credential variables to remove",
+        }
+      : { ok: true, warn: true, label: "commandEnv.scrubSecrets is off: build/test commands see every variable of this shell" },
+  );
+  if (env.HECTOR_SANDBOX) {
+    const proxy = env.HTTPS_PROXY ?? env.https_proxy;
+    lines.push({
+      ok: !!proxy,
+      label: proxy ? `running in the hector-flow sandbox; outbound traffic through ${proxy}` : "running in the hector-flow sandbox",
+      detail: proxy ? undefined : "HTTPS_PROXY is not set: the agents cannot reach the model APIs. Start it with sandbox/hector-sandbox.sh.",
+    });
+    return lines;
+  }
+  const reasons = [
+    config.loop.mode === "auto" ? "loop.mode is auto" : "",
+    runtimesInUse(config).has("codex") ? "steps run on Codex" : "",
+    config.backlog?.type === "github" || config.backlog?.type === "azure-devops" ? `tickets come from ${config.backlog.type}` : "",
+  ].filter(Boolean);
+  if (reasons.length) {
+    lines.push({
+      ok: true,
+      warn: true,
+      label: `not running in a sandbox (${reasons.join(", ")})`,
+      detail: "Agent-written code runs with your files and network. See docs/17-sandbox.md: sandbox/hector-sandbox.sh runs the same commands in a container.",
+    });
+  }
+  return lines;
 }

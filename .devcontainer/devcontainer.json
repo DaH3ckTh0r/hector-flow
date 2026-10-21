@@ -1,0 +1,14 @@
+{
+  // Opens a shell in the hector-flow sandbox from VS Code ("Reopen in Container").
+  // Set HECTOR_WORK_ROOT (the folder holding your repos) in your environment first;
+  // the egress proxy and allowlist are the same as with sandbox/hector-sandbox.sh.
+  "name": "hector-flow sandbox",
+  "dockerComposeFile": ["../sandbox/compose.yaml", "compose.devcontainer.yaml"],
+  "service": "hector",
+  "runServices": ["egress", "hector"],
+  "overrideCommand": false,
+  "workspaceFolder": "${localEnv:HECTOR_WORK_ROOT}",
+  "remoteUser": "${localEnv:HECTOR_UID:1000}",
+  "updateRemoteUserUID": false,
+  "customizations": { "vscode": { "extensions": [] } }
+}

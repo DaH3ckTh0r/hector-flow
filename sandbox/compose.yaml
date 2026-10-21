@@ -1,0 +1,90 @@
+# hector-flow sandbox: two containers on a private network.
+#
+#   hector  runs hector-flow (agents, build/test commands, git). It is on the
+#           "internal" network only, which has NO route to the internet.
+#   egress  the allowlist proxy (sandbox/allowed-domains.txt). It is the only
+#           container with internet access, and hector reaches the outside
+#           world only through it.
+#
+# Normally started by sandbox/hector-sandbox.sh, which sets the variables below.
+# HECTOR_WORK_ROOT is mounted at the SAME path inside the container, so git
+# worktrees created inside stay valid on your machine.
+
+name: hector-sandbox
+
+x-image: &image
+  image: ${HECTOR_IMAGE:-hector-flow-sandbox:latest}
+  build:
+    context: ..
+    dockerfile: sandbox/Dockerfile
+    args:
+      DOTNET_CHANNEL: ${HECTOR_DOTNET_CHANNEL:-}
+      EXTRA_APT_PACKAGES: ${HECTOR_EXTRA_APT_PACKAGES:-}
+      OPENCODE_VERSION: ${HECTOR_OPENCODE_VERSION:-}
+
+services:
+  egress:
+    <<: *image
+    entrypoint: ["node", "/opt/hector-flow/sandbox/egress-proxy.mjs"]
+    command: []
+    init: true
+    user: "65534:65534"
+    environment:
+      ALLOWLIST: /etc/hector/allowed-domains.txt
+      PORT: "3128"
+      HTTPS_PROXY: ""
+      HTTP_PROXY: ""
+    volumes:
+      - ${HECTOR_ALLOWLIST:-./allowed-domains.txt}:/etc/hector/allowed-domains.txt:ro
+    networks: [internal, outside]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+  hector:
+    <<: *image
+    depends_on: [egress]
+    user: "${HECTOR_UID:-1000}:${HECTOR_GID:-1000}"
+    working_dir: ${HECTOR_WORK_ROOT:?set HECTOR_WORK_ROOT to the folder that holds your repos}
+    init: true
+    stdin_open: true
+    tty: true
+    networks: [internal]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: ${HECTOR_PIDS_LIMIT:-4096}
+    mem_limit: ${HECTOR_MEM_LIMIT:-8g}
+    volumes:
+      # Your repos and the workspaces folder (worktrees, logs, memory): same path as on the host.
+      - ${HECTOR_WORK_ROOT}:${HECTOR_WORK_ROOT}
+      # Runtime state inside the sandbox (Copilot/Codex sessions, npm cache). Never your real home.
+      - hector-home:/home/hector
+    environment:
+      HTTPS_PROXY: http://egress:3128
+      HTTP_PROXY: http://egress:3128
+      https_proxy: http://egress:3128
+      http_proxy: http://egress:3128
+      NO_PROXY: localhost,127.0.0.1,::1
+      no_proxy: localhost,127.0.0.1,::1
+      # Commit identity (set by hector-sandbox.sh from your git config).
+      GIT_AUTHOR_NAME: ${GIT_AUTHOR_NAME:-hector-flow}
+      GIT_AUTHOR_EMAIL: ${GIT_AUTHOR_EMAIL:-hector-flow@localhost}
+      GIT_COMMITTER_NAME: ${GIT_COMMITTER_NAME:-hector-flow}
+      GIT_COMMITTER_EMAIL: ${GIT_COMMITTER_EMAIL:-hector-flow@localhost}
+      # Credentials: passed only when set in your shell. Use dedicated, limited ones.
+      # hector-flow removes them from build/test commands (commandEnv.scrubSecrets).
+      ANTHROPIC_API_KEY:
+      CLAUDE_CODE_OAUTH_TOKEN:
+      OPENAI_API_KEY:
+      CODEX_API_KEY:
+      COPILOT_GITHUB_TOKEN:
+      HECTOR_BACKLOG_TOKEN:
+
+volumes:
+  hector-home:
+
+networks:
+  internal:
+    internal: true
+  outside: {}

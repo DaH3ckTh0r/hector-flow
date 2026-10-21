@@ -1,0 +1,38 @@
+# Hosts the hector-flow sandbox may reach (through sandbox/egress-proxy.mjs).
+# One per line: exact host, "*.domain" (subdomains only) or ".domain" (domain and subdomains).
+# The proxy reloads this file when it changes. Every decision is logged:
+#   docker compose -f sandbox/compose.yaml logs egress
+#
+# Keep it short. Every host here is also a place agent-written code could send data to.
+
+# ── Model APIs (keep the ones for the runtimes you use) ─────────────────────
+# Claude (Agent SDK with ANTHROPIC_API_KEY)
+api.anthropic.com
+# Codex (OPENAI_API_KEY)
+api.openai.com
+# GitHub Copilot: model API and the token exchange on api.github.com
+.githubcopilot.com
+api.github.com
+# OpenCode: add the provider you configured, e.g.
+# openrouter.ai
+
+# ── Package registries (dependency installs inside build/test commands) ────
+registry.npmjs.org
+# pypi.org
+# files.pythonhosted.org
+# api.nuget.org
+# .nuget.org
+
+# ── Backlog (only if `start` reads tickets from these) ──────────────────────
+# api.github.com is already above.
+# dev.azure.com
+
+# ── Deliberately NOT here ────────────────────────────────────────────────────
+# github.com, gist.github.com, raw.githubusercontent.com, pastebin-like sites,
+# your cloud's management endpoints (management.azure.com, *.amazonaws.com):
+# add them only if a component's build really needs them.
+#
+# Note: api.github.com (needed by Copilot and the GitHub backlog) accepts writes
+# such as creating gists. That is why build/test commands run without any
+# GitHub token (commandEnv.scrubSecrets), and why the token you give the
+# sandbox should be fine-grained and limited (see docs/17-sandbox.md).

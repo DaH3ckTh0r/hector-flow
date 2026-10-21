@@ -294,6 +294,18 @@ export const ConfigSchema = z.object({
    * Example: a curl to a Teams/Slack webhook, or `osascript -e 'display notification ...'`.
    */
   notifyCommand: z.string().optional(),
+  /**
+   * Environment of the commands the flow runs itself (build/test/lint,
+   * acceptance checks, QA, post-merge checks). They run code agents wrote, so
+   * credential-looking variables are removed by default.
+   */
+  commandEnv: z
+    .object({
+      scrubSecrets: z.boolean().default(true),
+      /** Variables to pass even though they look like credentials (e.g. a test database password). */
+      keep: z.array(z.string()).default([]),
+    })
+    .prefault({}),
   /** Where worktrees are created. Relative to the repo's parent folder. */
   workspacesDir: z.string().default(".hector-workspaces"),
   /** Load the repo's CLAUDE.md / .claude settings into each agent. */

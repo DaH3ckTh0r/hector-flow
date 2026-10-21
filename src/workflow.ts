@@ -20,6 +20,7 @@ import {
 import type { AgentMode, AgentRequest, AgentResult, AgentRunner, AgentScope } from "./runner/agent-runner.js";
 import { runDag, validateDag } from "./scheduler.js";
 import { resolveRuntime } from "./runtimes.js";
+import { commandEnv } from "./tools/env.js";
 import { addCounts, emptyCounts, type TokenCounts, type Usage } from "./usage.js";
 import { loadSkills, resolveStep, type SkillSet } from "./skills.js";
 import {
@@ -209,6 +210,8 @@ export async function implementTicket(opts: {
   let skillSet: SkillSet | undefined;
   const repoLock = new KeyedMutex();
 
+  // Commands the flow runs execute agent-written code: no credentials in their environment.
+  const { env: cmdEnv } = commandEnv(config);
   let costUsd = 0;
   const usageByModel: Record<string, TokenCounts> = {};
   const usageByRuntime: Record<string, TokenCounts> = {};
@@ -442,7 +445,7 @@ export async function implementTicket(opts: {
   // ── Checks and guards (pure code) ───────────────────────────────────────
   async function runCommands(step: string, cwd: string, commands: string[]): Promise<CheckResult> {
     for (const command of commands) {
-      const r = await runShell(command, cwd);
+      const r = await runShell(command, cwd, { baseEnv: cmdEnv });
       await log.emit({ type: "shell", step, command, ok: r.ok, code: r.code, durationMs: r.durationMs });
       if (!r.ok) return { ok: false, output: `$ ${command}\n${r.timedOut ? "(timed out)\n" : ""}${r.output}` };
     }

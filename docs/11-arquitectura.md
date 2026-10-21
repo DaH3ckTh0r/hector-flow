@@ -19,6 +19,7 @@ src/
 ├── memory.ts              Memoria persistente: guardar, buscar (tf-idf), validar por ejecución
 ├── backlog.ts             Adaptadores de backlog: carpeta, GitHub Issues, Azure DevOps
 ├── loop.ts                Bucle continuo, estado, bloqueo, modos, fusión verificada, approve/reject/requeue
+├── tools/env.ts           Entorno sin credenciales para los comandos que ejecuta el flujo
 ├── usage.ts               Contadores de tokens normalizados, diferencias de sesiones retomadas, informes de usage
 ├── runtimes.ts            resolveRuntime (runtime/modelo/esfuerzo por paso), RouterRunner, createRunner
 ├── tool-bridge.ts         Servidor MCP HTTP local: ask y memoria para Codex y OpenCode
@@ -39,11 +40,14 @@ src/
 
 skills/                    Skills de serie: _shared/RULES.md y <rol>/SKILL.md
 
+sandbox/                   Dockerfile, compose.yaml, hector-sandbox.sh, egress-proxy.mjs y allowed-domains.txt
+
 test/
 ├── helpers.ts             ScriptedRunner: un AgentRunner falso, determinista
 ├── runner-policy.ts       Reglas de permisos del runner real
 ├── runtimes.ts            Puente MCP (cliente MCP real), Codex, OpenCode y Copilot con SDK simulados, enrutamiento
 ├── usage.ts               Tokens de cada runtime (SDK simulados) e informes
+├── sandbox.ts             Proxy de salida con sockets reales, limpieza de credenciales, líneas de check
 ├── e2e.ts                 18 escenarios del flujo
 ├── loop.ts                Memoria, acceso MCP, adaptadores (HTTP simulado) y el bucle
 └── tutorial.ts            El tutorial de punta a punta

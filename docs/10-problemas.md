@@ -120,6 +120,18 @@ El flujo se detiene a propósito para que decidas tú. Los worktrees de tarea se
 | `⚠ codex cannot use SSE MCP servers` | Codex solo soporta servidores stdio y HTTP. | Usa la variante HTTP del servidor, o deja ese paso en Claude u OpenCode. |
 | Un juez en otro runtime usa un modelo de Claude por error | `models.review` o el front-matter nombran modelos de Claude y no se aplican fuera de Claude. | Define `model` en el juez o en `runtime.<nombre>.model`. |
 
+## Sandbox
+
+| Mensaje | Causa | Solución |
+|---|---|---|
+| `⚠ not running in a sandbox (…)` (en `check`) | Modo `auto`, pasos en Codex o tickets de GitHub/Azure DevOps fuera del sandbox. | Usa `sandbox/hector-sandbox.sh` ([17-sandbox.md](17-sandbox.md)), o asume el riesgo. |
+| `✖ running in the hector-flow sandbox` | Dentro del contenedor, sin `HTTPS_PROXY`. | Lánzalo con `hector-sandbox.sh`, no con `docker run` directo. |
+| Un build falla con errores de red (`ENOTFOUND`, `ECONNREFUSED`, `403`) | El host que necesita no está en la lista. | `hector-sandbox.sh logs \| grep '"allowed":false'` y añádelo a `allowed-domains.txt` (se recarga sola). |
+| `Component "x": … is not inside a git repository (spawn git ENOENT)` | Ese repo no está dentro de la carpeta montada. | Mira la línea `mounting …` y usa `--root` con la carpeta que contiene todos los repos. |
+| `Run this from inside <carpeta>` | Lanzaste el script fuera de la carpeta montada. | Ejecútalo desde uno de tus repos, o usa `--root`. |
+| Un test necesita una contraseña que el flujo quita | `commandEnv.scrubSecrets` la considera credencial. | Añádela a `commandEnv.keep`. |
+| Los agentes no pueden autenticarse en el sandbox | La sesión de `claude`/`copilot` de tu `$HOME` no entra. | Usa claves en variables (`ANTHROPIC_API_KEY`, `COPILOT_GITHUB_TOKEN`…), o inicia sesión en `hector-sandbox.sh shell`. |
+
 ## Otros problemas
 
 | Síntoma | Causa probable | Solución |

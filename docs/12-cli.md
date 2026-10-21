@@ -39,8 +39,9 @@ Comprueba, en orden:
 5. Que `buildCommand`, `testCommand` y `lintCommand` de cada componente **pasan sobre el código actual**.
 6. Qué skills de pasos están personalizadas, y sus avisos (⚠).
 7. Que existen las carpetas de `pluginDirs`, y cuántos jueces revisan si hay más de uno.
-8. Si algún paso usa otro runtime: qué runtime ejecuta cada paso, que `opencode` está en el PATH (✖ si no), que Copilot tiene sesión iniciada (✖ si no; inicia su runtime unos instantes, sin llamar a ningún modelo), que existen `runtime.codex.path` / `runtime.copilot.path` si los defines, y avisos (⚠) de lo que Codex no aplica y de servidores SSE que Codex no soporta. Ver [16-runtimes.md](16-runtimes.md).
-9. Que el ticket se puede leer y tiene criterios.
+8. Qué variables con aspecto de credencial se quitarán del entorno de los comandos de build/test (`commandEnv`), si se está ejecutando dentro del sandbox y con qué proxy (✖ si falta), y un aviso (⚠) si no hay sandbox y el modo es `auto`, hay pasos en Codex o los tickets vienen de GitHub o Azure DevOps.
+9. Si algún paso usa otro runtime: qué runtime ejecuta cada paso, que `opencode` está en el PATH (✖ si no), que Copilot tiene sesión iniciada (✖ si no; inicia su runtime unos instantes, sin llamar a ningún modelo), que existen `runtime.codex.path` / `runtime.copilot.path` si los defines, y avisos (⚠) de lo que Codex no aplica y de servidores SSE que Codex no soporta. Ver [16-runtimes.md](16-runtimes.md).
+10. Que el ticket se puede leer y tiene criterios.
 
 Símbolos: `✔` correcto, `⚠` aviso, `✖` error. Termina con `Ready to run.` (código 0) o `N check(s) failed.` (código 1).
 
@@ -169,6 +170,18 @@ npm run flow -- models --repo <ruta> copilot
 ```
 
 Muestra el id, el multiplicador de *premium requests*, los niveles de esfuerzo admitidos y el nombre. Los modelos que la política de tu organización deshabilita aparecen marcados. Falla si Copilot no tiene sesión iniciada.
+
+## En el sandbox
+
+Todos los comandos funcionan igual dentro del sandbox, con `sandbox/hector-sandbox.sh` en lugar de `npm run flow --`:
+
+```bash
+sandbox/hector-sandbox.sh check --repo . --ticket ../TIENDA-42.md
+sandbox/hector-sandbox.sh shell     # terminal dentro
+sandbox/hector-sandbox.sh logs      # decisiones del proxy
+```
+
+Ver [17-sandbox.md](17-sandbox.md).
 
 ## `usage`
 

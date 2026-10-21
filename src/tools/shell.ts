@@ -16,12 +16,19 @@ export interface ShellResult {
 export function runShell(
   command: string,
   cwd: string,
-  opts: { timeoutMs?: number; maxChars?: number; env?: NodeJS.ProcessEnv } = {},
+  opts: {
+    timeoutMs?: number;
+    maxChars?: number;
+    /** Added on top of baseEnv. */
+    env?: NodeJS.ProcessEnv;
+    /** The environment to start from (default: this process's). */
+    baseEnv?: NodeJS.ProcessEnv;
+  } = {},
 ): Promise<ShellResult> {
   const { timeoutMs = 10 * 60_000, maxChars = 12_000 } = opts;
   const started = Date.now();
   return new Promise((resolve) => {
-    const child = spawn(command, { cwd, shell: true, env: { ...process.env, CI: "1", ...opts.env } });
+    const child = spawn(command, { cwd, shell: true, env: { ...(opts.baseEnv ?? process.env), CI: "1", ...opts.env } });
     let out = "";
     let timedOut = false;
     const append = (d: Buffer) => {

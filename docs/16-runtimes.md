@@ -98,7 +98,7 @@ Esta es la diferencia importante. Claude, OpenCode y Copilot piden permiso **ant
 | Tokens por llamada | ✔ por modelo | ✔ por modelo | ✔ por modelo | ✔ (modelo configurado) |
 | Costo en USD | ✔ | ✔ (lo informa OpenCode) | ✘ Copilot cobra *premium requests* (`costUsd` = 0) | ✘ solo tokens (`costUsd` = 0) |
 
-**Consecuencia práctica:** si un paso corre en Codex, no dejes secretos dentro de los repos ni en carpetas que el usuario del proceso pueda leer, y considera que puede ejecutar cualquier comando dentro de su carpeta (sin red). `check` lo advierte.
+**Consecuencia práctica:** si un paso corre en Codex, no dejes secretos dentro de los repos ni en carpetas que el usuario del proceso pueda leer, y considera que puede ejecutar cualquier comando dentro de su carpeta (sin red). `check` lo advierte. Lo más simple es ejecutar esos pasos en el [sandbox](17-sandbox.md), que no ve tu `$HOME` ni sale a Internet salvo por la lista de dominios.
 
 ### Cómo se responde a OpenCode
 

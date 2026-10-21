@@ -21,6 +21,10 @@ hector-flow deja que agentes de IA editen código y ejecuten comandos sin pedir 
 
 Todo lo anterior describe a Claude. **OpenCode** y **GitHub Copilot** aplican las mismas reglas: cada herramienta pide permiso y el flujo responde con `decide()` (en Copilot, además, un gancho revisa las lecturas que no piden permiso). **Codex** no permite aprobar cada herramienta; el flujo usa su sandbox del sistema operativo (solo lectura, o escritura limitada a la carpeta del componente, sin red) y las revisiones de git de después de cada paso, pero **no puede aplicar `readDenyPaths`, las carpetas legibles ni `allowedCommands`**. Tabla completa en [16-runtimes.md](16-runtimes.md#aislamiento-qué-protege-cada-runtime).
 
+### Sandbox
+
+Para ejecuciones desatendidas, tickets de terceros o pasos en Codex, ejecuta hector-flow en el **sandbox** ([17-sandbox.md](17-sandbox.md)): un contenedor que solo ve la carpeta de tus repos, sin ruta a Internet salvo un proxy con lista de dominios permitidos, y con tus credenciales fuera de los comandos de build y test. Es lo único que también aísla los comandos que ejecuta el propio flujo.
+
 ## Permisos por modo
 
 | Herramienta | `readonly` | `edit` (implementador) | `tests` (autor de tests) |
@@ -73,11 +77,11 @@ Sé consciente de estos límites antes de usarlo en un repo con acceso a sistema
 
 | Riesgo | Por qué | Mitigación recomendada |
 |---|---|---|
-| **El código de los tests y de la aplicación se ejecuta en tu máquina** | Un test escrito por un agente corre con tus permisos cuando se ejecuta `testCommand`. | Ejecuta hector-flow en un contenedor o una VM, con un usuario sin privilegios. |
-| **Secretos en el entorno** | Los comandos heredan las variables de entorno de la terminal donde lanzas hector-flow. | Lanza hector-flow en un entorno sin credenciales de producción. No dejes secretos en `.env` dentro de los repos. |
+| **El código de los tests y de la aplicación se ejecuta en tu máquina** | Un test escrito por un agente corre con tus permisos cuando se ejecuta `testCommand`. | El sandbox ([17-sandbox.md](17-sandbox.md)): contenedor, sin tu `$HOME`, red solo por allowlist. |
+| **Secretos en el entorno** | Los comandos de build/test ya no reciben variables con aspecto de credencial (`commandEnv.scrubSecrets`), pero sí el resto de tu entorno, y los procesos de los agentes reciben las claves de sus modelos. | El sandbox, con claves dedicadas y con límite. No dejes secretos en `.env` dentro de los repos. |
 | **`Grep` sobre una carpeta** | Si un archivo de secretos está **commiteado**, un `Grep` sobre la carpeta que lo contiene puede mostrar líneas suyas: la comprobación es sobre la ruta que se busca, no sobre cada resultado. | No commitees secretos. Usa Key Vault, variables de entorno o user-secrets. |
 | **Comandos permitidos** | `readDenyPaths` controla las herramientas de lectura del agente, no lo que hace por dentro un comando permitido (un test puede abrir cualquier archivo). | Contenedor, y tests que no lean secretos. |
-| **Red desde los comandos** | Un comando permitido (o un test) puede abrir conexiones. | Contenedor con red restringida si te preocupa. |
+| **Red desde los comandos** | Un comando permitido (o un test) puede abrir conexiones. | El sandbox: solo los dominios de `sandbox/allowed-domains.txt`. |
 | **`notifyCommand`** | Lo escribes tú y no pasa por la allowlist. | Mantenlo simple. |
 | **Servidores MCP externos** | Corren con tus permisos (stdio) o reciben lo que el agente les envía (http). `readDenyPaths` no se aplica dentro de ellos. | Asígnalos solo a los pasos que los necesitan (`mcpAccess`); prefiere servidores de solo lectura. |
 | **Memoria** | Los agentes escriben en ella texto libre que otros tickets leerán. | Solo se valida lo de ejecuciones `completed`; revísala con `memory list` y borra lo que no sea cierto. |
@@ -86,7 +90,7 @@ Sé consciente de estos límites antes de usarlo en un repo con acceso a sistema
 | **Pasos en Copilot** | Copilot lee `.github/copilot-instructions.md` y `AGENTS.md`; el código va a los modelos de tu suscripción de Copilot, bajo la política de tu organización. Una solicitud que la política marca para aprobación humana se rechaza. | Revisa esos archivos y la política de Copilot de tu organización. |
 | **Pasos en OpenCode** | OpenCode lee su `opencode.json` y `AGENTS.md`; el modelo lo da un proveedor externo. | Revisa esos archivos y a qué proveedor envías el código. |
 
-En resumen: los permisos de hector-flow evitan que un agente haga cosas **fuera de su tarea** (tocar otro componente, debilitar tests, ejecutar comandos arbitrarios), pero no son un sandbox del sistema operativo.
+En resumen: los permisos de hector-flow evitan que un agente haga cosas **fuera de su tarea** (tocar otro componente, debilitar tests, ejecutar comandos arbitrarios), pero no son un sandbox del sistema operativo. Para eso está [el sandbox](17-sandbox.md).
 
 ## Tus repositorios
 

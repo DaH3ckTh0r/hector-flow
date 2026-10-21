@@ -6,6 +6,7 @@ import { resolveComponents } from "./components.js";
 import type { FlowConfig } from "./config.js";
 import type { AgentRunner } from "./runner/agent-runner.js";
 import { abortMerge, git, merge } from "./tools/git.js";
+import { commandEnv } from "./tools/env.js";
 import { runShell } from "./tools/shell.js";
 import { flowPaths, implementTicket, type RepoSummary, type RunSummary } from "./workflow.js";
 
@@ -307,7 +308,7 @@ export async function mergeTicket(opts: {
   for (const c of components) {
     const dir = c.path === "." ? c.repoRoot : join(c.repoRoot, c.path);
     for (const cmd of [c.buildCommand, c.testCommand, c.lintCommand].filter((x): x is string => !!x)) {
-      const res = await runShell(cmd, dir);
+      const res = await runShell(cmd, dir, { baseEnv: commandEnv(opts.config).env });
       log(`  $ ${cmd} (${c.name}, merged) → ${res.ok ? "ok" : `exit ${res.code}`}`);
       if (!res.ok) {
         await rollback();

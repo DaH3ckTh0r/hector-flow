@@ -10,7 +10,8 @@ Le das un ticket con criterios de aceptación y te devuelve, en cada repositorio
 - Tus correcciones manuales se convierten en **pautas permanentes** para el paso que causó el error.
 - Las instrucciones de cada paso son **skills** (`SKILL.md`) que cada repo puede personalizar, con skills de Claude Code y plugins por paso.
 - La revisión puede hacerse con **varios jueces independientes** (con modelos distintos); todos deben aprobar.
-- Los agentes solo leen su espacio de trabajo y **nunca archivos de secretos** (`.env`, claves, `~/.ssh`…).
+- Los agentes solo leen su espacio de trabajo y **nunca archivos de secretos** (`.env`, claves, `~/.ssh`…). Los comandos de build y test se ejecutan **sin tus credenciales**.
+- **Sandbox** listo para usar: un contenedor que solo ve tus repos y sale a Internet solo por un proxy con lista de dominios (`sandbox/hector-sandbox.sh`).
 - **Memoria persistente** por repo: los agentes guardan decisiones y descubrimientos que los siguientes tickets recuperan (validada solo si el ticket termina bien). Servidores **MCP externos** (Engram, Context7…) asignables por paso.
 - **Consumo de tokens por llamada**: entrada, caché escrita y leída, salida y razonamiento, por modelo, en el log de cada paso, en el resumen y en `usage`.
 - **Varios runtimes**: cada paso, y cada juez, puede correr en **Claude**, **GitHub Copilot**, **OpenCode** (cualquier proveedor) o **Codex** (OpenAI), con las mismas skills, contratos y herramientas del flujo.
@@ -51,6 +52,7 @@ Sigue el **[tutorial completo](docs/09-tutorial.md)**: del ticket a las ramas li
 | 14 | [Memoria y MCP](docs/14-memoria-y-mcp.md) | Memoria persistente, `memory`, servidores MCP externos por paso |
 | 15 | [Backlog y bucle](docs/15-backlog-y-bucle.md) | Carpeta, GitHub, Azure DevOps; modos manual/supervised/auto; fusión verificada |
 | 16 | [Runtimes](docs/16-runtimes.md) | Claude, Copilot, Codex y OpenCode por paso y por juez; qué aísla cada uno; puente MCP |
+| 17 | [Sandbox](docs/17-sandbox.md) | Ejecutar todo aislado: contenedor, proxy con allowlist, credenciales, herramientas de tus componentes |
 
 ## El ciclo
 
@@ -92,7 +94,7 @@ Códigos de salida de `run`: `0` completed · `3` needs_human · `1` failed.
 
 ## Requisitos
 
-Node 20+, git 2.30+, y Claude Code con sesión iniciada (o `ANTHROPIC_API_KEY`). macOS o Linux; en Windows, WSL2. Opcional: sesión de GitHub Copilot (`copilot login` o un token), de Codex (`npx codex login`) u OpenCode en el PATH si envías pasos a esos runtimes.
+Node 20+, git 2.30+ (o solo Docker, con el [sandbox](docs/17-sandbox.md)), y Claude Code con sesión iniciada (o `ANTHROPIC_API_KEY`). macOS o Linux; en Windows, WSL2. Opcional: sesión de GitHub Copilot (`copilot login` o un token), de Codex (`npx codex login`) u OpenCode en el PATH si envías pasos a esos runtimes.
 
 ## Estado
 

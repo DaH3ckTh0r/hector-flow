@@ -1,0 +1,9 @@
+node_modules
+dist
+.git
+**/.hector-workspaces
+test
+docs
+examples
+scripts
+*.log

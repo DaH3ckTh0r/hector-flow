@@ -47,8 +47,9 @@ export async function resolveComponents(primaryRepo: string, config: FlowConfig)
     let repoRoot: string;
     try {
       repoRoot = await git(dir, "rev-parse", "--show-toplevel");
-    } catch {
-      throw new Error(`Component "${name}": ${dir} is not inside a git repository.`);
+    } catch (err) {
+      const why = (String((err as { stderr?: string }).stderr ?? "").trim() || (err as Error).message || "").split("\n")[0];
+      throw new Error(`Component "${name}": ${dir} is not inside a git repository${why ? ` (${why})` : ""}.`);
     }
     const path = normalizePath(c.path ?? ".");
     const locked = ("lockedPaths" in c && c.lockedPaths) || config.lockedPaths;

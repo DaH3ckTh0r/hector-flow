@@ -1,0 +1,4 @@
+# Keeps the hector container running for VS Code instead of running a hector-flow command.
+services:
+  hector:
+    entrypoint: ["sleep", "infinity"]
