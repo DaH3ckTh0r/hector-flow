@@ -46,6 +46,7 @@ La consola muestra los mismos eventos en formato legible:
 | Paso | Significado |
 |---|---|
 | `enrich`, `plan`, `review`, `qa-plan` | Agentes globales |
+| `review:<juez>` | Un juez, cuando hay varios (`review.judges`) |
 | `write-tests:<comp>` | Autor de tests de un componente |
 | `tests-red:<comp>` | Ejecución de tests antes de implementar |
 | `implement-<Tn>` | Implementación de una tarea |
@@ -130,7 +131,8 @@ Los nombres de archivo reemplazan `:` y otros caracteres no válidos en Windows 
 | `gate-<Tn>-<n>.json`, `resolve-<Tn>.json` | Correcciones de compuerta y resolución de conflictos |
 | `diagnose_<comp>-<n>.json` | Diagnóstico: `owner`, `errorSignature`, `rootCause`, `files`, `fixPlan` |
 | `repair-<Tn>-<n>.json`, `repair_<comp>-<n>.json` | Reparaciones |
-| `review-<n>.json` | Revisión: `approved`, `issues` |
+| `review-<n>.json` | Revisión de la ronda n: `approved`, `issues`. Con varios jueces, el veredicto **fusionado** más `judges[{judge, approved}]` |
+| `review_<juez>-<n>.json` | Con varios jueces: la revisión de cada uno |
 | `qa-report.json` | Una fila por comando de aceptación: `component`, `criterion`, `command`, `ok` |
 | `questions.json` | Todas las preguntas `ask` con su respuesta |
 | `test-plan.md` | Plan de pruebas manuales |

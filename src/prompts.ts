@@ -6,65 +6,16 @@ import type { Ticket } from "./ticket.js";
 /**
  * Prompts are plain functions of typed inputs. Each agent gets exactly the
  * context its step needs — never the whole conversation of previous steps.
+ * What each role IS (its instructions) lives in skills/<role>/SKILL.md.
  */
 
-const RULES = `You are one step in an automated software workflow controlled by code.
-Do only the job described for this step, then return the structured output.
-Work autonomously: make reasonable decisions and look things up in the code instead of stopping to ask.
-Do not commit, push, merge, create branches or install global tools: the workflow does that.`;
-
-const base: Record<Role, string> = {
-  enrich: `${RULES}
-Role: researcher. Read the ticket and its acceptance criteria, then search every component's code for what the implementers will need:
-affected functionality, edge cases, existing files to model new code on, conventions, and the contracts between components
-(API shapes, messages, events). The goal is that nobody downstream has to invent anything. Do not modify anything.`,
-  plan: `${RULES}
-Role: planner. Break the ticket into small tasks, each one small enough for a single focused agent with a fresh context.
-Each task changes exactly ONE component. Tasks without dependencies run IN PARALLEL in separate workspaces, so:
-- declare dependsOn only when a task truly needs another task's code (e.g. the frontend consumes an endpoint the backend task creates);
-- when components share a contract, state it precisely in BOTH tasks' descriptions (routes, payloads, field names, status codes)
-  so they can be built in parallel and still fit together;
-- avoid two parallel tasks editing the same file.
-If the ticket already lists sub-tasks from a technical design, follow that decomposition. Do not modify anything.`,
-  testAuthor: `${RULES}
-Role: test author for ONE component. Write automated tests, in this component's existing framework and style, for the parts of the
-acceptance criteria this component is responsible for. Write tests only — no production code. They are expected to fail until the
-feature is implemented, and they become locked: nobody may change them, so each must be a faithful, minimal statement of a criterion.
-Return an acceptance map entry for each criterion you cover: ONE command, run from the component folder, that exits 0 only when the
-criterion is met here. Single commands only: no pipes, &&, redirection or substitution. Skip criteria this component plays no part in.`,
-  coder: `${RULES}
-Role: implementer of ONE task in ONE component. Change production code to complete it. You cannot edit test files, and you can only
-write inside your component's folder. Other components may be under construction in parallel: code against the contracts stated in
-your task, not against what you guess another component will do.
-Keep changes minimal and in the style of the surrounding code. You may run the component's test command to check your work.
-List in changedFiles EVERY file you created, modified or deleted: the workflow commits exactly those files and discards anything else.
-If the ticket or plan leaves a behavior-changing question open and the code does not answer it, use the ask tool before guessing.`,
-  diagnose: `${RULES}
-Role: diagnostician. Determine WHY the check failed and WHO owns the fix. Be skeptical of the obvious reading.
-Classify as "test" only if the test contradicts the ticket's acceptance criteria — not because changing the test would be easier.
-List files relative to the component folder you are in. Do not modify anything.`,
-  review: `${RULES}
-Role: code reviewer. Review the change across all components against the ticket: correctness, security, error handling,
-maintainability, and whether the components actually fit together (matching contracts).
-You do not fix anything: your findings are routed to the implementers. Mark "blocker" only for problems that must be fixed before merging.
-Do not modify anything.`,
-  qaPlan: `${RULES}
-Role: QA writer. Write a manual test plan a teammate can follow to check this feature end to end. Include only cases that can
-actually happen; a teammate's time is wasted by unrealistic cases. Do not modify anything.`,
-  lead: `${RULES}
-Role: technical lead answering an implementer's question. Answer only from the ticket, the research, the plan and the code.
-Set confident=true only when one of those actually settles it. Never invent requirements: if nothing settles it, say so,
-and suggest the most conservative option consistent with the ticket. Keep the answer short. Do not modify anything.`,
-  distill: `${RULES}
-Role: retrospective analyst. A human corrected the workflow's output. Work out which step produced each mistake and write a general,
-reusable guideline for that step so the mistake never happens again. Ignore purely cosmetic edits that carry no lesson.
-Do not modify anything.`,
-};
-
-/** Base instructions for a step plus the guidelines distilled from past human corrections. */
-export function systemPrompt(role: Role, guidelines: Guideline[]): string {
-  if (!guidelines.length) return base[role];
-  return `${base[role]}
+/**
+ * A step's system prompt: its skill instructions (from SKILL.md, see src/skills.ts)
+ * plus the guidelines distilled from past human corrections.
+ */
+export function systemPrompt(instructions: string, guidelines: Guideline[]): string {
+  if (!guidelines.length) return instructions;
+  return `${instructions}
 
 <guidelines_from_past_corrections>
 Humans had to correct this step before. Follow these guidelines:
@@ -238,14 +189,14 @@ ${failure}
 
 Apply the fix described in the diagnosis. Check with: ${c.testCommand}`,
 
-  review: (t: Ticket, diffs: string, cs: ComponentInfo[]) => `${ticketBlock(t)}
+  review: (t: Ticket, diffs: string, cs: ComponentInfo[], focus?: string) => `${ticketBlock(t)}
 
 ${componentsBlock(cs)}
 
 <diff>
 ${diffs}
 </diff>
-
+${focus ? `\n<review_focus>\n${focus}\n</review_focus>\n` : ""}
 Review this change. Report each finding with its component and a path relative to that component's folder.`,
 
   reviewFix: (t: Ticket, c: ComponentInfo, issues: Review["issues"]) => `${ticketBlock(t)}

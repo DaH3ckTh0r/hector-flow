@@ -1,4 +1,6 @@
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { loadSkills } from "./skills.js";
 import { resolveComponents } from "./components.js";
 import type { FlowConfig } from "./config.js";
 import { isCommandAllowed } from "./guards.js";
@@ -93,6 +95,30 @@ export async function preflight(opts: {
         detail: r.ok ? undefined : r.output,
       });
     }
+  }
+
+  try {
+    const set = await loadSkills(primaryRoot, opts.config);
+    const custom = Object.values(set.skills).filter((s) => s.sourceKind !== "builtin");
+    add({
+      ok: true,
+      label: custom.length
+        ? `step skills: ${custom.map((s) => `${s.role} (${s.sourceKind})`).join(", ")} customized; the rest built-in`
+        : "step skills: all built-in",
+    });
+    for (const s of Object.values(set.skills)) {
+      for (const w of s.warnings) add({ ok: true, warn: true, label: `skill ${s.role}: ${w}`, detail: s.source });
+    }
+  } catch (err) {
+    add({ ok: false, label: "step skills", detail: (err as Error).message });
+  }
+  for (const dir of opts.config.pluginDirs) {
+    const abs = resolve(primaryRoot, dir);
+    add({ ok: existsSync(abs), label: `plugin folder ${abs} exists` });
+  }
+  const judges = opts.config.review.judges;
+  if (judges.length > 1) {
+    add({ ok: true, label: `review by ${judges.length} independent judges: ${judges.map((j) => j.name).join(", ")}` });
   }
 
   if (opts.ticketPath) {

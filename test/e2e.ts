@@ -18,7 +18,8 @@ import { cleanTicket } from "../src/clean.js";
 import { ConfigSchema } from "../src/config.js";
 import { distillTicket } from "../src/distill.js";
 import { readTicket } from "../src/ticket.js";
-import { implementTicket } from "../src/workflow.js";
+import { loadSkills, ejectSkills } from "../src/skills.js";
+import { implementTicket, mergeReviews } from "../src/workflow.js";
 import { byTask, ScriptedRunner, sh, write } from "./helpers.js";
 
 function initRepo(dir: string, files: Record<string, string>) {
@@ -550,7 +551,186 @@ async function cleanAfterFailure() {
   console.log("✓ clean removes a ticket's worktrees and branches, keeps logs, and is idempotent");
 }
 
+// ── Skills ────────────────────────────────────────────────────────────────
+async function skillsOverridesAndPrecedence() {
+  const { repo, ticket, parent } = makeRepo();
+  // A repo-level override for the coder: front-matter model/effort/skills and a custom body.
+  write(
+    repo,
+    ".hector/skills/coder/SKILL.md",
+    `---
+name: coder
+description: Our coder
+model: haiku
+effort: low
+skills:
+  - xunit-tests
+  - acme:style
+---
+CUSTOM CODER INSTRUCTIONS: always add a JSDoc line.
+`,
+  );
+  // A config skillDir wins over .hector/skills; this one also opts out of the shared rules.
+  write(repo, "team-skills/review/SKILL.md", `---\nname: review\nrules: false\n---\nTEAM REVIEW CHECKLIST\n`);
+  write(repo, "plugins/acme/.claude-plugin/plugin.json", `{"name":"acme"}`);
+  sh(repo, "add", "-A");
+  sh(repo, "commit", "-qm", "custom skills");
+
+  const config = ConfigSchema.parse({
+    testCommand: "node --test",
+    lockedPaths: ["test/**"],
+    allowedCommands: ["node --test"],
+    workspacesDir: "ws",
+    skillDirs: ["team-skills"],
+    efforts: { coder: "high" }, // config beats front-matter
+    claudeSkills: { coder: ["node-testing"], review: ["security-review"] },
+    pluginDirs: ["plugins/acme"],
+  });
+  const runner = new ScriptedRunner({
+    enrich: [enrich],
+    plan: [plan],
+    testAuthor: [writeTests],
+    coder: [coderWrites(GOOD)],
+    review: [approve],
+    qaPlan: [qaPlan],
+  });
+  const s = await implementTicket({ repo, ticket: await readTicket(ticket("SK-1")), config, runner });
+  assert.equal(s.status, "completed", s.reason);
+
+  const coder = runner.calls.find((c) => c.role === "coder")!;
+  assert.match(coder.systemPrompt, /CUSTOM CODER INSTRUCTIONS/, "repo override replaces the built-in coder skill");
+  assert.doesNotMatch(coder.systemPrompt, /Role: implementer of ONE task/, "built-in coder text is not used");
+  assert.match(coder.systemPrompt, /automated software workflow controlled by code/, "shared RULES.md is prepended");
+  assert.equal(coder.model, "haiku", "front-matter model used when config has none");
+  assert.equal(coder.effort, "high", "config effort overrides front-matter");
+  assert.deepEqual(coder.claudeSkills, ["xunit-tests", "acme:style", "node-testing"], "front-matter + config Claude skills");
+  assert.deepEqual(coder.plugins, [join(repo, "plugins/acme")], "plugin folders resolved from the primary repo");
+
+  const review = runner.calls.find((c) => c.role === "review")!;
+  assert.match(review.systemPrompt, /TEAM REVIEW CHECKLIST/, "skillDirs win over .hector/skills and built-ins");
+  assert.doesNotMatch(review.systemPrompt, /controlled by code/, "rules: false skips the shared rules");
+  assert.deepEqual(review.claudeSkills, ["security-review"]);
+
+  const enrichCall = runner.calls.find((c) => c.role === "enrich")!;
+  assert.match(enrichCall.systemPrompt, /Role: researcher/, "steps without overrides use the built-in skill");
+  assert.deepEqual(enrichCall.claudeSkills, [], "a step with no skills gets an explicit empty list");
+
+  // Eject copies built-ins without overwriting customized ones.
+  const ejected = await ejectSkills(repo, ["coder", "plan", "_shared"]);
+  assert.deepEqual(ejected.map((e) => [e.path.replace(repo + "/", ""), e.created]), [
+    [".hector/skills/coder/SKILL.md", false],
+    [".hector/skills/plan/SKILL.md", true],
+    [".hector/skills/_shared/RULES.md", true],
+  ]);
+  assert.match(readFileSync(join(repo, ".hector/skills/coder/SKILL.md"), "utf8"), /CUSTOM CODER/, "existing override untouched");
+  assert.match(readFileSync(join(repo, ".hector/skills/plan/SKILL.md"), "utf8"), /name: plan/);
+
+  // Bad front-matter produces warnings, not failures.
+  const set = await loadSkills(repo, ConfigSchema.parse({ testCommand: "x", skillDirs: ["bad"] }));
+  assert.equal(set.skills.coder.sourceKind, "repo");
+  write(repo, "bad/lead/SKILL.md", `---\nname: leader\neffort: extreme\ncolor: blue\n---\nAnswer.\n`);
+  const bad = await loadSkills(repo, ConfigSchema.parse({ testCommand: "x", skillDirs: ["bad"] }));
+  assert.equal(bad.skills.lead.sourceKind, "config");
+  assert.equal(bad.skills.lead.warnings.length, 3, bad.skills.lead.warnings.join("; "));
+  assert.equal(bad.skills.lead.effort, undefined, "invalid effort ignored");
+  console.log("✓ skills: repo and config overrides, precedence, front-matter vs config, Claude skills, plugins, eject, warnings");
+}
+
+// ── Dual review ───────────────────────────────────────────────────────────
+function judgesConfig(parent: string, policy: Record<string, unknown> = {}) {
+  return ConfigSchema.parse({
+    testCommand: "node --test",
+    lockedPaths: ["test/**"],
+    allowedCommands: ["node --test"],
+    workspacesDir: "ws",
+    policy,
+    review: {
+      judges: [
+        { name: "security", model: "opus", effort: "high", focus: "Focus on security and data exposure." },
+        { name: "maintainer", model: "sonnet" },
+      ],
+    },
+  });
+}
+const byJudge = (r: { role: string; model?: string } & Record<string, unknown>) =>
+  r.role === "review" ? `review:${r.model}` : byTask(r as never);
+
+async function dualReview() {
+  const { repo, ticket, parent } = makeRepo();
+  const runner = new ScriptedRunner(
+    {
+      enrich: [enrich],
+      plan: [plan],
+      testAuthor: [writeTests],
+      "coder:T1": [coderWrites(GOOD)],
+      "coder:fix": [coderWrites(`/** Clamps n to [min, max]. */\n${GOOD}`, "docs per review")],
+      "review:opus": [() => ({ approved: true, issues: [] }), () => ({ approved: true, issues: [] })],
+      "review:sonnet": [
+        () => ({ approved: false, issues: [{ severity: "major", component: "main", file: "src/math.js", description: "clamp is undocumented" }] }),
+        () => ({ approved: true, issues: [] }),
+      ],
+      qaPlan: [qaPlan],
+    },
+    byJudge as never,
+  );
+  const s = await implementTicket({ repo, ticket: await readTicket(ticket("JD-1")), config: judgesConfig(parent), runner });
+  assert.equal(s.status, "completed", s.reason);
+  assert.equal(s.reviewRounds, 1, "one judge's major finding triggered a fix round");
+  const reviews = runner.calls.filter((c) => c.role === "review");
+  assert.equal(reviews.length, 4, "two judges × two rounds");
+  assert.deepEqual(reviews.map((r) => [r.model, r.effort]).slice(0, 2).sort(), [["opus", "high"], ["sonnet", undefined]]);
+  assert.match(reviews.find((r) => r.model === "opus")!.prompt, /<review_focus>\nFocus on security/, "judge focus in its prompt");
+  assert.doesNotMatch(reviews.find((r) => r.model === "sonnet")!.prompt, /review_focus/, "no focus, no block");
+  const fix = runner.keys("coder:fix")[0]!;
+  assert.match(fix.prompt, /\[maintainer\] clamp is undocumented/, "the finding is routed with the judge that raised it");
+  const merged = JSON.parse(readFileSync(join(s.runDir, "artifacts/review-1.json"), "utf8"));
+  assert.deepEqual(merged.judges, [{ judge: "security", approved: true }, { judge: "maintainer", approved: false }]);
+  assert.equal(merged.approved, false);
+  assert.ok(existsSync(join(s.runDir, "artifacts/review_security-1.json")) && existsSync(join(s.runDir, "artifacts/review_maintainer-2.json")));
+  console.log("✓ dual review: independent judges with own model/effort/focus; one rejection blocks; findings routed with attribution");
+}
+
+async function dualReviewBlockerStays() {
+  const { repo, ticket, parent } = makeRepo();
+  const blocker = () => ({ approved: false, issues: [{ severity: "blocker", component: "main", file: "src/math.js", description: "Unvalidated input" }] });
+  const runner = new ScriptedRunner(
+    {
+      enrich: [enrich],
+      plan: [plan],
+      testAuthor: [writeTests],
+      "coder:T1": [coderWrites(GOOD)],
+      "review:opus": [blocker],
+      "review:sonnet": [() => ({ approved: true, issues: [{ severity: "minor", component: "main", file: "src/math.js", description: "unvalidated   INPUT" }] })],
+      qaPlan: [qaPlan],
+    },
+    byJudge as never,
+  );
+  const s = await implementTicket({ repo, ticket: await readTicket(ticket("JD-2")), config: judgesConfig(parent, { reviewRounds: 0 }), runner });
+  assert.equal(s.status, "needs_human");
+  assert.match(s.reason!, /review still reports blockers:\n- main\/src\/math\.js: \[security, maintainer\] Unvalidated input/);
+  console.log("✓ dual review: duplicate findings merge with the highest severity; a remaining blocker means needs_human");
+}
+
+function mergeReviewsUnit() {
+  const r = mergeReviews([
+    { judge: "a", review: { approved: true, issues: [{ severity: "minor", component: "api", file: "x.ts", description: "Name it better" }] } },
+    { judge: "b", review: { approved: true, issues: [{ severity: "major", component: "api", file: "x.ts", description: "name  it BETTER" }, { severity: "minor", component: "web", file: "y.ts", description: "typo" }] } },
+  ]);
+  assert.equal(r.approved, true, "all approve and no blocker → approved");
+  assert.equal(r.issues.length, 2);
+  assert.deepEqual(r.issues[0], { severity: "major", component: "api", file: "x.ts", description: "[a, b] Name it better" });
+  const single = mergeReviews([{ judge: "only", review: { approved: true, issues: [{ severity: "minor", component: "c", file: "f", description: "d" }] } }]);
+  assert.equal(single.issues[0]!.description, "d", "single judge: descriptions unchanged");
+  const blocked = mergeReviews([{ judge: "a", review: { approved: true, issues: [{ severity: "blocker", component: "c", file: "f", description: "d" }] } }]);
+  assert.equal(blocked.approved, false, "a blocker overrides approval");
+  console.log("✓ mergeReviews: dedupe ignores case/spacing, keeps max severity, attributes judges, blockers veto");
+}
+
 const ctx = await happyPath();
+mergeReviewsUnit();
+await skillsOverridesAndPrecedence();
+await dualReview();
+await dualReviewBlockerStays();
 await cleanAfterFailure();
 await sameWorkerThenFresh();
 await reviewAndQaRouting();

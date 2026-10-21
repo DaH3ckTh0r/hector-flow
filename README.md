@@ -8,8 +8,11 @@ Le das un ticket con criterios de aceptación y te devuelve, en cada repositorio
 - Las tareas independientes se ejecutan **en paralelo**, cada una en su propio worktree de git.
 - Los defectos vuelven **al worker que escribió el código**, que los corrige retomando su sesión.
 - Tus correcciones manuales se convierten en **pautas permanentes** para el paso que causó el error.
+- Las instrucciones de cada paso son **skills** (`SKILL.md`) que cada repo puede personalizar, con skills de Claude Code y plugins por paso.
+- La revisión puede hacerse con **varios jueces independientes** (con modelos distintos); todos deben aprobar.
+- Los agentes solo leen su espacio de trabajo y **nunca archivos de secretos** (`.env`, claves, `~/.ssh`…).
 
-Basado en el flujo de Alpaca Tech (*"Así programo con IA tras +500 horas"*) y en el ciclo de Orca. Usa el [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/structured-outputs).
+Basado en el flujo de Alpaca Tech (*"Así programo con IA tras +500 horas"*) y en el ciclo de Orca, con ideas de gentle-ai (skills por fase, revisión doble, lista de secretos) y Noodle (skills como punto de extensión). Usa el [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/structured-outputs).
 
 ## Inicio rápido
 
@@ -39,7 +42,8 @@ Sigue el **[tutorial completo](docs/09-tutorial.md)**: del ticket a las ramas li
 | 9 | **[Tutorial](docs/09-tutorial.md)** | Un desarrollo completo con dos repos, paso a paso |
 | 10 | [Solución de problemas](docs/10-problemas.md) | Cada mensaje de error, su causa y qué hacer |
 | 11 | [Arquitectura y extensión](docs/11-arquitectura.md) | Mapa del código, `AgentRunner`, pruebas sin costo, cómo agregar pasos |
-| 12 | [CLI](docs/12-cli.md) | `check`, `run`, `distill`, `clean` |
+| 12 | [CLI](docs/12-cli.md) | `check`, `run`, `distill`, `clean`, `skills` |
+| 13 | [Skills de los pasos](docs/13-skills.md) | Personalizar cada agente con `SKILL.md`, skills de Claude Code y plugins |
 
 ## El ciclo
 
@@ -70,6 +74,7 @@ VERIFICACIÓN
 | `run --repo <r> --ticket <t>` | Implementa el ticket | Sí |
 | `distill --repo <r> --ticket-id <ID>` | Aprende de tus correcciones | Sí (una vez) |
 | `clean --repo <r> --ticket-id <ID>` | Borra worktrees y ramas del ticket | No |
+| `skills --repo <r> [list \| eject <paso…\|all>]` | Muestra o personaliza las skills de los pasos | No |
 
 Códigos de salida de `run`: `0` completed · `3` needs_human · `1` failed.
 
@@ -79,6 +84,6 @@ Node 20+, git 2.30+, y Claude Code con sesión iniciada (o `ANTHROPIC_API_KEY`).
 
 ## Estado
 
-Probado con un runner simulado sobre repos y comandos reales (`npm test`: reglas de permisos, 13 escenarios del flujo y el tutorial completo). La integración con el modelo real (sesiones retomadas, herramienta `ask`, salida estructurada) sigue la documentación del Agent SDK, pero conviene validarla en tu primer ticket revisando `events.jsonl`.
+Probado con un runner simulado sobre repos y comandos reales (`npm test`: reglas de permisos, 17 escenarios del flujo y el tutorial completo). La integración con el modelo real (sesiones retomadas, herramienta `ask`, salida estructurada) sigue la documentación del Agent SDK, pero conviene validarla en tu primer ticket revisando `events.jsonl`.
 
 Pendiente: push y creación de PRs, atender comentarios de PRs, leer tickets desde Azure DevOps/Jira/Linear, y cancelar workers en curso cuando otro falla. Ver [arquitectura](docs/11-arquitectura.md#extensiones-habituales).

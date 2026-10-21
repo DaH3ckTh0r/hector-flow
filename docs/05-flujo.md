@@ -1,6 +1,6 @@
 # 5. El flujo, paso a paso
 
-Este documento describe exactamente qué hace `hector-flow run`, en orden. Todo lo que aquí se describe como decisión lo toma el **código** (`src/workflow.ts`); los agentes solo producen el JSON de cada paso.
+Este documento describe exactamente qué hace `hector-flow run`, en orden. Todo lo que aquí se describe como decisión lo toma el **código** (`src/workflow.ts`); los agentes solo producen el JSON de cada paso, siguiendo las instrucciones de la **skill** de su rol ([13-skills.md](13-skills.md)).
 
 ```
  0. Preparación         componentes, repos limpios, worktrees de integración
@@ -24,6 +24,7 @@ Este documento describe exactamente qué hace `hector-flow run`, en orden. Todo 
 
 ## 0. Preparación
 
+1. Carga las **skills** de los pasos (las del repo o de `skillDirs` sobrescriben a las de serie) y registra en el log los pasos personalizados y cualquier aviso de front-matter.
 1. Resuelve la raíz git de `--repo`: es el **repo principal**.
 2. Resuelve los componentes de la config: para cada uno, la raíz git de `repo` (relativa al repo principal) y su `path`. Los `lockedPaths` de cada componente se convierten en rutas relativas a la raíz de su repo.
 3. Comprueba que **todos** los repos de los componentes están limpios (`git status --porcelain` vacío). Si no: `failed`.
@@ -155,10 +156,18 @@ Con todas las tareas integradas, para cada componente involucrado se ejecuta, en
 
 | | |
 |---|---|
-| Rol | `review`, solo lectura |
-| Recibe | Ticket, componentes y el diff de **todos** los repos desde su base, con un encabezado `### repository <nombre>` por repo |
+| Rol | `review`, solo lectura, uno o varios **jueces** |
+| Recibe | Ticket, componentes y el diff de **todos** los repos desde su base, con un encabezado `### repository <nombre>` por repo; si el juez tiene `focus`, un bloque `<review_focus>` |
 | Devuelve | `approved`, `issues[{severity, component, file, description}]` con `severity` = `blocker`, `major` o `minor` |
-| Artefactos | `review-1.json`, `review-2.json`… |
+| Artefactos | Un juez: `review-1.json`, `review-2.json`… Varios: `review_<juez>-<ronda>.json` por juez y `review-<ronda>.json` con el veredicto fusionado y el voto de cada uno |
+
+**Varios jueces** (`review.judges`): todos revisan el mismo diff **en paralelo y por separado**, cada uno con su modelo, esfuerzo y foco. El veredicto se fusiona en código:
+
+- aprobado solo si **todos** aprueban y ningún hallazgo es `blocker`;
+- los hallazgos iguales (componente, archivo y descripción, sin distinguir mayúsculas ni espacios) se unen con la severidad más alta;
+- cada hallazgo indica qué jueces lo levantaron: `[security, maintainer] …`.
+
+El log muestra el voto: `· review round 1: security approves, maintainer rejects → not approved`.
 
 Si hay hallazgos `blocker` o `major` y quedan rondas (`reviewRounds`):
 

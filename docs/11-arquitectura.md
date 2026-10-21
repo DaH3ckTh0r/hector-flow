@@ -12,8 +12,9 @@ src/
 ├── scheduler.ts           Grafo de tareas con dependencias y tope de concurrencia
 ├── mutex.ts               Serializa operaciones de git por repo
 ├── schemas.ts             Contratos zod de la salida de cada agente
-├── prompts.ts             Instrucciones base por rol y prompts de cada paso
-├── guards.ts              Globs, PathPolicy (qué se puede escribir), allowlist de comandos
+├── skills.ts              Carga de skills de los pasos: orden de búsqueda, front-matter, eject
+├── prompts.ts             systemPrompt (skill + pautas) y el prompt de cada paso
+├── guards.ts              Globs, PathPolicy (escritura), ReadPolicy (lectura), allowlist de comandos
 ├── lessons.ts             Pautas y lecciones de error
 ├── distill.ts             Comando distill
 ├── check.ts               Comando check
@@ -21,21 +22,23 @@ src/
 ├── log.ts                 events.jsonl y artefactos
 ├── runner/
 │   ├── agent-runner.ts    Interfaz AgentRunner: la frontera entre el flujo y la IA
-│   └── claude-runner.ts   Implementación con el Claude Agent SDK y canUseTool
+│   └── claude-runner.ts   Implementación con el Claude Agent SDK; decide() en hook PreToolUse y canUseTool
 └── tools/
     ├── git.ts             Worktrees, commits exactos, merges, reversiones
     └── shell.ts           Ejecución de comandos con timeout y salida acotada
 
+skills/                    Skills de serie: _shared/RULES.md y <rol>/SKILL.md
+
 test/
 ├── helpers.ts             ScriptedRunner: un AgentRunner falso, determinista
 ├── runner-policy.ts       Reglas de permisos del runner real
-├── e2e.ts                 13 escenarios del flujo
+├── e2e.ts                 17 escenarios del flujo
 └── tutorial.ts            El tutorial de punta a punta
 ```
 
 ## Principios de diseño
 
-1. **El código decide; los agentes razonan.** `workflow.ts` contiene todo el control: orden, bucles, topes, enrutamiento y criterio de terminado. Ningún agente decide qué paso viene después.
+1. **El código decide; las skills describen; los agentes razonan.** `workflow.ts` contiene todo el control: orden, bucles, topes, enrutamiento y criterio de terminado. Ningún agente decide qué paso viene después. Las instrucciones de cada rol viven en su `SKILL.md`, no en el código, así que se iteran sin tocar TypeScript.
 2. **Un agente, una responsabilidad, un contexto limpio.** Cada paso es una sesión nueva (salvo cuando se retoma a propósito la de un worker) que recibe solo lo que necesita.
 3. **Todo agente devuelve JSON con contrato.** Se valida dos veces: con JSON Schema en el SDK y con zod en el runner.
 4. **Confiar en git, no en lo que afirma el agente.** Los archivos del ledger, las reversiones y los commits se calculan con git.
@@ -60,6 +63,10 @@ interface AgentRequest<S> {
   ask?: (q: string) => Promise<string>;  // exponer la herramienta ask
   scope?: AgentScope;              // root, writeRoot, lockedPaths, testPaths, allowedCommands
   readDirs?: string[];             // carpetas extra de solo lectura
+  model?: string;                  // resuelto: config > front-matter de la skill (o el del juez)
+  effort?: Effort;
+  claudeSkills?: string[];         // skills de Claude Code del paso ([] = ninguna)
+  plugins?: string[];              // plugins locales (solo sus skills)
 }
 
 interface AgentResult<T> {
@@ -86,7 +93,8 @@ Puede ignorar `resumeSessionId` (los defectos irán a un implementador nuevo), `
 |---|---|
 | Modelo y esfuerzo por rol | `options.model`, `options.effort` desde la config |
 | Instrucciones | Preset `claude_code` + `append: systemPrompt` |
-| Permisos | `allowedTools` solo para lectura y `ask`; todo lo demás pasa por `canUseTool` |
+| Permisos | `decide()` en un hook `PreToolUse` (todas las llamadas, incluidas las lecturas) y en `canUseTool` (las que piden permiso) |
+| Skills y plugins | `options.skills` (lista explícita, vacía si no hay) y `options.plugins` con `skipMcpDiscovery` |
 | Herramientas prohibidas | `disallowedTools: WebFetch, WebSearch, Task, Agent` |
 | JSON con contrato | `outputFormat: { type: "json_schema", schema }` y luego `schema.safeParse` |
 | Retomar sesión | `options.resume` y `result.session_id` |
@@ -121,7 +129,7 @@ Así se prueba cualquier cambio en el flujo con repos git reales y comandos real
 
 ### Cambiar las instrucciones de un rol
 
-Edita `base[<rol>]` en `src/prompts.ts`. Antes, considera si basta con una pauta en el archivo de lecciones o con el `CLAUDE.md` del repo: son más fáciles de iterar.
+No hace falta tocar código: `skills eject <rol>` copia su `SKILL.md` a `.hector/skills/` del repo, donde lo editas y commiteas. Para cambiar el comportamiento de serie para todos los repos, edita `skills/<rol>/SKILL.md` en hector-flow. Ver [13-skills.md](13-skills.md).
 
 ### Agregar un campo a la salida de un agente
 
@@ -133,8 +141,8 @@ Edita `base[<rol>]` en `src/prompts.ts`. Antes, considera si basta con una pauta
 
 Ejemplo: un paso de seguridad después de la revisión.
 
-1. Agrega el rol a `RoleSchema` en `src/config.ts` (así admite `models` y `efforts`).
-2. Agrega sus instrucciones en `base` y su prompt en `prompts`, en `src/prompts.ts`.
+1. Agrega el rol a `RoleSchema` en `src/config.ts` (así admite `models`, `efforts` y `claudeSkills`).
+2. Crea `skills/<rol>/SKILL.md` con sus instrucciones, y agrega su prompt en `prompts`, en `src/prompts.ts`.
 3. Define su esquema de salida en `src/schemas.ts`.
 4. En `workflow.ts`, llámalo con `agent(...)` (solo lectura) o `editStep(...)` (si edita) en el punto que corresponda, y decide con código qué hacer con su salida. Si encuentra defectos, enrútalos con `routeDefect` en lugar de corregir en el mismo paso: un agente, una responsabilidad.
 5. Agrega un escenario en `test/e2e.ts`.

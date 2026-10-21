@@ -5,6 +5,7 @@ import { LessonStore } from "./lessons.js";
 import { prompts, systemPrompt, type LedgerEntry } from "./prompts.js";
 import type { AgentRunner } from "./runner/agent-runner.js";
 import { DistillSchema, type Distill } from "./schemas.js";
+import { loadSkills, resolveStep } from "./skills.js";
 import { readTicket } from "./ticket.js";
 import { git } from "./tools/git.js";
 import { flowPaths, type RunSummary } from "./workflow.js";
@@ -51,11 +52,15 @@ export async function distillTicket(opts: {
   const store = await LessonStore.open(paths.lessons);
   const cwd = (repos.find((r) => r.root === repoRoot) ?? repos[0]!).worktree;
 
+  const step = resolveStep(await loadSkills(repoRoot, opts.config), "distill", opts.config);
   const res = await opts.runner.run({
     role: "distill",
     mode: "readonly",
     cwd,
-    systemPrompt: systemPrompt("distill", []),
+    systemPrompt: systemPrompt(step.instructions, []),
+    model: step.model,
+    effort: step.effort,
+    claudeSkills: step.claudeSkills,
     prompt: prompts.distill(ticket, ledger, humanDiff.slice(0, 30_000)),
     schema: DistillSchema,
     readDirs: repos.map((r) => r.worktree).filter((w) => w !== cwd),

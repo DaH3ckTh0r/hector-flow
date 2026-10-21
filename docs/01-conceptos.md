@@ -25,7 +25,7 @@ y te devuelve:
 |---|---|---|
 | **Autonomía** | Defines el problema y el sistema te devuelve el trabajo terminado y probado, sin que tengas que aprobar cada paso. | Permisos definidos de antemano por paso y por componente; canal `ask` para dudas; aviso al terminar. |
 | **Corregir cada error una sola vez** | Cuando algo sale mal, no se parchea el resultado: se corrige la pieza del sistema que lo produjo, para que no vuelva a pasar. | `distill` convierte tus correcciones en pautas para el paso responsable. |
-| **Modularidad y granularidad** | Muchas piezas pequeñas, cada una con una sola responsabilidad. Si una falla, iteras solo esa. | Nueve roles; cada tarea limitada a un componente; un worktree por tarea. |
+| **Modularidad y granularidad** | Muchas piezas pequeñas, cada una con una sola responsabilidad. Si una falla, iteras solo esa. | Nueve roles, cada uno con su skill editable; cada tarea limitada a un componente; un worktree por tarea. |
 
 ## El ciclo en una imagen
 
@@ -60,6 +60,9 @@ El detalle de cada paso está en [05-flujo.md](05-flujo.md).
 | **Componente** | Una parte desplegable del sistema (backend, middleware, frontend) con sus propios comandos. Vive en un repo y una carpeta. |
 | **Repo principal** | El repo que pasas con `--repo`. Contiene `hector-flow.config.json`; las rutas `repo` de los componentes son relativas a él. |
 | **Rol** | El tipo de agente de un paso: `enrich`, `plan`, `testAuthor`, `coder`, `diagnose`, `review`, `qaPlan`, `lead`, `distill`. Cada rol tiene sus instrucciones, su modelo y su esfuerzo. |
+| **Skill de un paso** | El `SKILL.md` con las instrucciones de un rol. Las de serie están en `skills/`; cada repo puede sobrescribirlas en `.hector/skills/`. Ver [13-skills.md](13-skills.md). |
+| **Skill de Claude Code** | Una skill que Claude carga bajo demanda (convenciones, procedimientos). Se asigna por paso con `claudeSkills` o el front-matter. |
+| **Juez** | Un revisor independiente. Con varios (`review.judges`), todos deben aprobar. |
 | **Agente** | Una sesión del Agent SDK de Claude que ejecuta un paso, con un contexto limpio y permisos acotados. Devuelve JSON validado. |
 | **Worker** | Un agente `coder` que implementa una tarea del plan, en su propio worktree. Se le recuerda para devolverle sus defectos. |
 | **Worktree** | Una carpeta de trabajo de git ligada a tu repo, con su propia rama. Permite trabajar sin tocar tu checkout. |

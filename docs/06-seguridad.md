@@ -6,7 +6,9 @@ hector-flow deja que agentes de IA editen código y ejecuten comandos sin pedir 
 
 | Capa | Qué controla | Dónde |
 |---|---|---|
-| **Modo del paso** | `readonly`, `edit` o `tests`: si el agente puede escribir y dónde | `canUseTool` en `src/runner/claude-runner.ts` |
+| **Modo del paso** | `readonly`, `edit` o `tests`: si el agente puede escribir y dónde | `decide()` en `src/runner/claude-runner.ts` |
+| **Carpetas legibles** | Un agente solo lee su worktree y los worktrees de integración de los otros repos del ticket | `ReadPolicy` en `src/guards.ts` |
+| **Lista de secretos** | Ningún agente lee ni edita rutas de `readDenyPaths` (`.env`, `*.pem`, `~/.ssh`…) | `ReadPolicy` |
 | **Aislamiento por componente** | Un implementador solo escribe en la carpeta de su componente | `canUseTool` + `commitExact` |
 | **Tests bloqueados** | Nadie salvo el autor de tests escribe en `lockedPaths` | `canUseTool` + `enforceLocks` |
 | **Allowlist de comandos** | Qué puede ejecutar un agente con Bash | `isCommandAllowed` en `src/guards.ts` |
@@ -19,16 +21,27 @@ hector-flow deja que agentes de IA editen código y ejecuten comandos sin pedir 
 
 | Herramienta | `readonly` | `edit` (implementador) | `tests` (autor de tests) |
 |---|---|---|---|
-| `Read`, `Glob`, `Grep` | ✔ | ✔ | ✔ |
+| `Read`, `Glob`, `Grep` | Solo en carpetas legibles y fuera de `readDenyPaths` | Igual | Igual |
 | `Write`, `Edit`, `MultiEdit`, `NotebookEdit` | ✖ | Solo en su componente y fuera de rutas bloqueadas | Solo en los `lockedPaths` de su componente |
 | `Bash` | ✖ | Solo `allowedCommands` | Solo `allowedCommands` |
 | `ask` (MCP propio) | — | ✔ | — |
+| `Skill` (skills de Claude Code) | Solo si el paso tiene skills asignadas | Igual | Igual |
 | `WebFetch`, `WebSearch`, `Task`/`Agent` | ✖ | ✖ | ✖ |
 | Cualquier otra herramienta o MCP | ✖ | ✖ | ✖ |
 
-Las herramientas de lectura están preaprobadas. **Toda** escritura y todo comando pasan por la función `canUseTool`, que aplica estas reglas. Cuando niega algo, el agente recibe el motivo (por ejemplo, *"…belongs to another component. You may only write under backend/"*) y el log registra un evento `guard` con `denied <herramienta>`.
+**Cada** llamada a una herramienta pasa por la función `decide()` dos veces:
 
-Además, la lectura no está restringida a la carpeta del componente: un agente puede leer todo su worktree y, por `additionalDirectories`, los worktrees de integración de los otros repos del ticket.
+1. En un **hook `PreToolUse`**, que se ejecuta antes de cualquier herramienta, incluidas las de lectura (que en Claude Code no piden permiso y por eso nunca pasarían por `canUseTool`).
+2. En **`canUseTool`**, para las llamadas que sí piden permiso (escrituras y comandos).
+
+Cuando niega algo, el agente recibe el motivo (por ejemplo, *"…belongs to another component. You may only write under backend/"* o *"…matches readDenyPaths (secrets)"*) y el log registra un evento `guard` con `denied <herramienta>`.
+
+## Qué puede leer un agente
+
+1. **Solo sus carpetas legibles:** su worktree (todo, no solo la carpeta de su componente) y los worktrees de integración de los otros repos del ticket. Un `Read` de `/etc/hosts`, de `~/.ssh/id_rsa` o de un archivo fuera de esas carpetas se niega. Un `Grep` o un `Glob` sobre una carpeta de fuera también.
+2. **Nunca lo que coincida con `readDenyPaths`**, aunque esté dentro: por defecto `.env`, `.env.*`, claves (`*.pem`, `*.key`, `*.pfx`, `id_rsa*`), credenciales de herramientas (`.npmrc`, `.netrc`), `secrets.json`, `appsettings.*.local.json`, `local.settings.json` y las carpetas `~/.ssh`, `~/.aws`, `~/.azure`, `~/.kube`. La lista completa está en [03-configuracion.md](03-configuracion.md#readdenypaths--string-por-defecto-una-lista-de-archivos-de-secretos). Tampoco se pueden **editar**.
+
+Ten en cuenta que los worktrees son checkouts limpios: los archivos ignorados por git (como un `.env` local) **no existen** en ellos. La lista protege sobre todo de secretos commiteados y de rutas absolutas fuera del espacio de trabajo.
 
 ## Defensa en profundidad: revisiones después de cada paso
 
@@ -56,7 +69,8 @@ Sé consciente de estos límites antes de usarlo en un repo con acceso a sistema
 |---|---|---|
 | **El código de los tests y de la aplicación se ejecuta en tu máquina** | Un test escrito por un agente corre con tus permisos cuando se ejecuta `testCommand`. | Ejecuta hector-flow en un contenedor o una VM, con un usuario sin privilegios. |
 | **Secretos en el entorno** | Los comandos heredan las variables de entorno de la terminal donde lanzas hector-flow. | Lanza hector-flow en un entorno sin credenciales de producción. No dejes secretos en `.env` dentro de los repos. |
-| **Lectura amplia** | Un agente puede leer cualquier archivo de su worktree y de los repos del ticket. | No guardes secretos en los repos. |
+| **`Grep` sobre una carpeta** | Si un archivo de secretos está **commiteado**, un `Grep` sobre la carpeta que lo contiene puede mostrar líneas suyas: la comprobación es sobre la ruta que se busca, no sobre cada resultado. | No commitees secretos. Usa Key Vault, variables de entorno o user-secrets. |
+| **Comandos permitidos** | `readDenyPaths` controla las herramientas de lectura del agente, no lo que hace por dentro un comando permitido (un test puede abrir cualquier archivo). | Contenedor, y tests que no lean secretos. |
 | **Red desde los comandos** | Un comando permitido (o un test) puede abrir conexiones. | Contenedor con red restringida si te preocupa. |
 | **`notifyCommand`** | Lo escribes tú y no pasa por la allowlist. | Mantenlo simple. |
 | **Las instrucciones de `CLAUDE.md` y `.claude/`** | Con `loadProjectSettings: true` los agentes las siguen. | Revisa esos archivos, o desactiva la opción. |

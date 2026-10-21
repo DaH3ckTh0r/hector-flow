@@ -71,6 +71,17 @@ El flujo se detiene a propósito para que decidas tú. Los worktrees de tarea se
 | `Could not update Tn's workspace` | No se pudo actualizar el worktree de un worker antes de devolverle un defecto. | Raro; revisa `_tasks/Tn` y el log. |
 | `Acceptance criteria pass, but review still reports blockers` | Todo pasa, pero el revisor mantiene bloqueantes tras `reviewRounds`. El trabajo está commiteado. | Lee los bloqueantes y decide si corregirlos a mano o aceptarlos. |
 
+## Skills, lecturas y jueces
+
+| Mensaje | Causa | Solución |
+|---|---|---|
+| `No SKILL.md found for step "x"` | Falta la skill de un paso en todas las carpetas de búsqueda. | Restaura la carpeta `skills/` de hector-flow o crea `.hector/skills/x/SKILL.md`. Ver [13-skills.md](13-skills.md). |
+| `⚠ skill x: …` (en `check`, `skills list` o el log) | Front-matter con claves desconocidas, nombre distinto de la carpeta o esfuerzo inválido. | Corrige el `SKILL.md`; no detiene el flujo. |
+| `denied Read — … is outside the folders this step may read` | El agente intentó leer fuera de su worktree y de los repos del ticket. | Normal y esperado. Si necesita ese contenido, agrégalo al repo o al ticket. |
+| `denied Read — … matches readDenyPaths (secrets)` | El agente intentó leer un archivo de secretos. | Normal. Si el archivo no es secreto, quítalo de `readDenyPaths` (recuerda que definirla reemplaza la lista por defecto). |
+| `denied Skill — No skills are enabled for this step` | El agente intentó usar una skill de Claude que no tiene asignada. | Agrégala en la skill del paso (`skills:`) o en `claudeSkills.<rol>`. |
+| `review round N: a approves, b rejects → not approved` | Con varios jueces, basta con que uno rechace. | Mira `review_<juez>-N.json` para ver los motivos. Si un juez es demasiado estricto, ajusta su `focus` o la skill `review`. |
+
 ## Otros problemas
 
 | Síntoma | Causa probable | Solución |

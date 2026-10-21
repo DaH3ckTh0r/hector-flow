@@ -39,7 +39,7 @@ npm test            # ~1 minuto, sin llamadas al modelo
 `npm test` ejecuta tres suites:
 
 1. `test/runner-policy.ts`: las reglas de permisos de los agentes.
-2. `test/e2e.ts`: 13 escenarios del flujo con un runner simulado.
+2. `test/e2e.ts`: 17 escenarios del flujo con un runner simulado.
 3. `test/tutorial.ts`: el tutorial completo, de punta a punta.
 
 Debe terminar con `tutorial checks passed`.
@@ -69,6 +69,7 @@ En esta documentación se usa `npm run flow -- …`. Con `npm link`, sustitúyel
    - `examples/multi-component.config.json` para varios componentes.
 2. Commitea la config. Los repos tienen que estar limpios para ejecutar.
 3. Opcional pero recomendado: un `CLAUDE.md` en cada repo con tus convenciones. Los agentes lo leen si `loadProjectSettings` es `true` (por defecto).
+   Para cambiar cómo trabaja un paso concreto, personaliza su skill con `skills eject <paso>` ([13-skills.md](13-skills.md)).
 4. Agrega `.hector-workspaces/` al `.gitignore` de la carpeta que contiene tus repos, si esa carpeta también es un repo. Por defecto, hector-flow crea esa carpeta **junto** al repo principal, no dentro.
 5. Ejecuta `check` hasta que todo esté en ✔:
 

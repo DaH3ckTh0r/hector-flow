@@ -1,4 +1,5 @@
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 /** Minimal glob → RegExp: supports **, *, ? and {a,b}. Paths use forward slashes. */
 export function globToRegExp(glob: string): RegExp {
@@ -68,7 +69,48 @@ export class PathPolicy {
   }
 }
 
-const FORBIDDEN_SHELL = /[;&|`<>]|\$\(|\$\{|\n/;
+/**
+ * What an agent may read: only paths inside its readable roots (its worktree
+ * and the other repos of the ticket), and never paths matching a deny glob.
+ *
+ * Deny globs starting with "~/" or "/" are absolute; any other glob is matched
+ * against the path relative to the root that contains it (so "**\/.env" means
+ * any .env file in any readable root).
+ */
+export class ReadPolicy {
+  private readonly roots: string[];
+  private readonly absolute: RegExp[] = [];
+  private readonly relative: RegExp[] = [];
+
+  constructor(roots: string[], deny: string[], home: string = homedir()) {
+    this.roots = roots.map((r) => resolve(r));
+    for (const g of deny) {
+      if (g.startsWith("~/")) this.absolute.push(globToRegExp(toPosix(resolve(home, g.slice(2)))));
+      else if (isAbsolute(g)) this.absolute.push(globToRegExp(toPosix(resolve(g))));
+      else this.relative.push(globToRegExp(g.replace(/^\.\//, "")));
+    }
+  }
+
+  check(p: string, base: string): { ok: true } | { ok: false; reason: string } {
+    const abs = resolve(base, p.startsWith("~/") ? join(homedir(), p.slice(2)) : p);
+    const root = this.roots.find((r) => abs === r || !relative(r, abs).startsWith("..") && !isAbsolute(relative(r, abs)));
+    if (!root) {
+      return { ok: false, reason: `${p} is outside the folders this step may read (its workspace and the ticket's other repositories).` };
+    }
+    const absPosix = toPosix(abs);
+    const rel = toPosix(relative(root, abs));
+    if (this.absolute.some((r) => r.test(absPosix)) || (rel && this.relative.some((r) => r.test(rel)))) {
+      return { ok: false, reason: `${p} matches readDenyPaths (secrets). Do not read it; work without its contents.` };
+    }
+    return { ok: true };
+  }
+}
+
+function toPosix(p: string): string {
+  return p.split(sep).join("/");
+}
+
+const FORBIDDEN_SHELL =/[;&|`<>]|\$\(|\$\{|\n/;
 
 /**
  * Accepts a command only if it starts with an allowed prefix (a prefix ending

@@ -29,6 +29,13 @@ Invalid config at /Users/tu/mi-repo/hector-flow.config.json:
   // Agentes
   "models": { "<rol>": "<modelo>" },
   "efforts": { "<rol>": "<esfuerzo>" },
+  "skillDirs": [],
+  "claudeSkills": { "<rol>": ["<skill>"] },
+  "pluginDirs": [],
+  "review": { "judges": [{ "name": "reviewer" }] },
+
+  // Seguridad
+  "readDenyPaths": ["**/.env", "…"],
 
   // Límites y comportamiento
   "policy": { /* ver abajo */ },
@@ -148,6 +155,8 @@ Si el `testCommand` de un componente no está permitido, `check` muestra un avis
 | `lead` | Durante la implementación | Responde las preguntas de los workers (`ask`). | No |
 | `distill` | Después, a mano | Convierte tus correcciones en pautas. | No |
 
+Las instrucciones de cada rol viven en su **skill** (`skills/<rol>/SKILL.md`), que puedes personalizar por repo. Ver [13-skills.md](13-skills.md).
+
 ### `models` — objeto rol → modelo, por defecto `{}`
 
 Modelo de cada rol. Acepta los alias de Claude Code (`opus`, `sonnet`, `haiku`) o un ID completo (por ejemplo `claude-sonnet-5-5`). Los roles sin valor usan el modelo por defecto de tu Claude Code.
@@ -166,6 +175,69 @@ Punto de partida razonable, que conviene ajustar por prueba y error (la implemen
 Esfuerzo de razonamiento por rol: `low`, `medium`, `high`, `xhigh` o `max`. Si el modelo no admite un nivel, Claude Code lo baja sin avisar. Más esfuerzo suele mejorar la planificación y el diagnóstico a cambio de tiempo y costo.
 
 ---
+
+**Precedencia del modelo y el esfuerzo de un paso:** `models.<rol>` / `efforts.<rol>` de la config → `model` / `effort` del front-matter de la skill del paso → valor por defecto de Claude Code. En la revisión, el `model` y `effort` de cada juez van por delante de todo.
+
+### `skillDirs` — string[], por defecto `[]`
+
+Carpetas adicionales con skills de pasos (`<carpeta>/<rol>/SKILL.md`), relativas al repo principal. Se buscan en orden, antes de `<repo>/.hector/skills` y de las skills de serie. Guía completa: [13-skills.md](13-skills.md).
+
+### `claudeSkills` — objeto rol → string[], por defecto `{}`
+
+Skills de Claude Code que puede usar cada paso, por nombre (o `plugin:skill`). Se combinan con la lista `skills` del front-matter de la skill del paso. Un paso sin skills recibe una lista vacía: no ve ninguna.
+
+```json
+"claudeSkills": { "testAuthor": ["xunit-tests"], "review": ["security-review"] }
+```
+
+### `pluginDirs` — string[], por defecto `[]`
+
+Carpetas de plugins locales de Claude Code, relativas al repo principal. Se cargan sus skills; sus servidores MCP no.
+
+### `review` — revisión por varios jueces
+
+```json
+"review": {
+  "judges": [
+    { "name": "security",   "model": "opus",   "effort": "high", "focus": "Focus on security, authentication and data exposure." },
+    { "name": "maintainer", "model": "sonnet" }
+  ]
+}
+```
+
+| Campo del juez | Tipo | Descripción |
+|---|---|---|
+| `name` | texto (minúsculas, dígitos, guiones) | Nombre del juez. Aparece en los hallazgos y en los artefactos. |
+| `model` | texto, opcional | Modelo de este juez. Por defecto, el del rol `review`. Usar modelos distintos da opiniones más independientes. |
+| `effort` | esfuerzo, opcional | Esfuerzo de este juez. |
+| `focus` | texto, opcional | Instrucciones adicionales solo para este juez, enviadas en un bloque `<review_focus>`. |
+
+Por defecto hay un único juez (`reviewer`) y la revisión funciona como siempre. Con dos o más:
+
+- todos revisan **el mismo diff, en paralelo y sin ver a los demás**;
+- se aprueba solo si **todos** aprueban y ningún hallazgo es `blocker`;
+- los hallazgos iguales (mismo componente, archivo y descripción, sin distinguir mayúsculas ni espacios) se fusionan con la **severidad más alta**, y cada hallazgo indica qué jueces lo levantaron: `[security, maintainer] …`;
+- los hallazgos fusionados se enrutan a los implementadores como siempre.
+
+Más en [05-flujo.md](05-flujo.md#7-review--revisión).
+
+### `readDenyPaths` — string[], por defecto una lista de archivos de secretos
+
+Rutas que ningún agente puede leer ni editar, aunque estén dentro de su espacio de trabajo. Se suman a la regla de base: **un agente solo puede leer su worktree y los worktrees de integración de los otros repos del ticket**.
+
+- Los globs que empiezan por `~/` o `/` son absolutos.
+- Los demás se comparan con la ruta relativa a la carpeta legible que la contiene (`**/.env` es cualquier `.env` en cualquier repo del ticket).
+
+Valor por defecto:
+
+```json
+["**/.env", "**/.env.*", "**/*.pem", "**/*.key", "**/*.pfx", "**/*.p12", "**/id_rsa*", "**/id_ed25519*",
+ "**/.npmrc", "**/.pypirc", "**/.netrc", "**/secrets.json", "**/*.secrets.json",
+ "**/appsettings.*.local.json", "**/local.settings.json",
+ "~/.ssh/**", "~/.aws/**", "~/.azure/**", "~/.config/gcloud/**", "~/.kube/**", "~/.docker/config.json"]
+```
+
+Si defines `readDenyPaths`, **reemplaza** la lista completa: copia la de arriba y agrega lo tuyo. `[]` desactiva la lista (la restricción a las carpetas legibles sigue). Detalles y límites en [06-seguridad.md](06-seguridad.md).
 
 ## `policy` — límites y comportamiento
 

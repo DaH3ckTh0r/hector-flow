@@ -7,8 +7,15 @@
       "buildCommand": "dotnet build --nologo -v q",
       "testCommand": "dotnet test --nologo -v q",
       "lintCommand": "dotnet format --verify-no-changes",
-      "lockedPaths": ["../../tests/Api.Tests/**"],
-      "allowedCommands": ["dotnet build", "dotnet test", "dotnet restore", "dotnet format"]
+      "lockedPaths": [
+        "../../tests/Api.Tests/**"
+      ],
+      "allowedCommands": [
+        "dotnet build",
+        "dotnet test",
+        "dotnet restore",
+        "dotnet format"
+      ]
     },
     "middleware": {
       "description": "Azure Functions that consume Service Bus messages and call the API",
@@ -16,8 +23,14 @@
       "path": ".",
       "buildCommand": "dotnet build --nologo -v q",
       "testCommand": "dotnet test --nologo -v q",
-      "lockedPaths": ["tests/**"],
-      "allowedCommands": ["dotnet build", "dotnet test", "dotnet restore"]
+      "lockedPaths": [
+        "tests/**"
+      ],
+      "allowedCommands": [
+        "dotnet build",
+        "dotnet test",
+        "dotnet restore"
+      ]
     },
     "frontend": {
       "description": "React + Vite SPA",
@@ -26,8 +39,16 @@
       "buildCommand": "npm run build",
       "testCommand": "npm test",
       "lintCommand": "npm run lint",
-      "lockedPaths": ["src/**/*.test.tsx", "e2e/**"],
-      "allowedCommands": ["npm test", "npm run build", "npm run lint", "npx vitest"]
+      "lockedPaths": [
+        "src/**/*.test.tsx",
+        "e2e/**"
+      ],
+      "allowedCommands": [
+        "npm test",
+        "npm run build",
+        "npm run lint",
+        "npx vitest"
+      ]
     }
   },
   "models": {
@@ -47,6 +68,22 @@
     "diagnose": "high",
     "review": "high"
   },
+  "review": {
+    "judges": [
+      {
+        "name": "security",
+        "model": "opus",
+        "effort": "high",
+        "focus": "Focus on authentication, authorization, input validation and data exposure across the API, the Functions and the SPA."
+      },
+      {
+        "name": "maintainer",
+        "model": "sonnet",
+        "focus": "Focus on correctness, contracts between components and consistency with existing conventions."
+      }
+    ]
+  },
+  "claudeSkills": {},
   "policy": {
     "maxParallel": 3,
     "repairAttempts": 5,

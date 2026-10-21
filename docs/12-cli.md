@@ -5,6 +5,8 @@ npm run flow -- <comando> [opciones]     # sin compilar, desde la carpeta de hec
 hector-flow <comando> [opciones]         # tras npm run build && npm link
 ```
 
+Comandos: `check`, `run`, `distill`, `clean`, `skills`.
+
 Las rutas relativas de `--repo`, `--ticket` y `--config` se resuelven desde la carpeta **donde escribiste el comando**, también con `npm run flow` (que internamente cambia a la carpeta de hector-flow; se usa la variable `INIT_CWD` que npm define con la carpeta original). Las rutas con `~` las expande tu shell.
 
 ## Opciones comunes
@@ -35,7 +37,9 @@ Comprueba, en orden:
 3. Que cada repo está limpio. Avisa (⚠, no falla) si quedan ramas `hector/*` o `hector-tasks/*`.
 4. Que el `testCommand` de cada componente está permitido por su `allowedCommands` (⚠ si no).
 5. Que `buildCommand`, `testCommand` y `lintCommand` de cada componente **pasan sobre el código actual**.
-6. Que el ticket se puede leer y tiene criterios.
+6. Qué skills de pasos están personalizadas, y sus avisos (⚠).
+7. Que existen las carpetas de `pluginDirs`, y cuántos jueces revisan si hay más de uno.
+8. Que el ticket se puede leer y tiene criterios.
 
 Símbolos: `✔` correcto, `⚠` aviso, `✖` error. Termina con `Ready to run.` (código 0) o `N check(s) failed.` (código 1).
 
@@ -125,6 +129,21 @@ deleted branch   api:hector/AB-123
 ```
 
 > El trabajo de esas ramas que no hayas fusionado ni subido se pierde.
+
+## `skills`
+
+Muestra o personaliza las skills de los pasos. **No llama al modelo.**
+
+```bash
+npm run flow -- skills --repo <ruta>                     # equivale a "skills list"
+npm run flow -- skills --repo <ruta> list
+npm run flow -- skills --repo <ruta> eject <paso…|all>
+```
+
+- `list`: para cada paso, el `SKILL.md` en uso, su origen (`builtin`, `repo` o `config`), el modelo y el esfuerzo efectivos con su origen, las skills de Claude y los avisos; al final, el `RULES.md` compartido.
+- `eject`: copia las skills de serie a `<repo>/.hector/skills/` para editarlas. Pasos válidos: `enrich`, `plan`, `testAuthor`, `coder`, `diagnose`, `review`, `qaPlan`, `distill`, `lead`, `_shared`, o `all`. Nunca sobrescribe (`exists`).
+
+Guía completa: [13-skills.md](13-skills.md).
 
 ## Scripts de npm
 

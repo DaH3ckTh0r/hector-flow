@@ -3,25 +3,43 @@ import {
   query,
   tool,
   type CanUseTool,
+  type HookCallback,
   type Options,
   type SDKResultMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import { dirname, isAbsolute } from "node:path";
 import { z } from "zod";
 import type { FlowConfig } from "../config.js";
-import { isCommandAllowed, PathPolicy } from "../guards.js";
+import { isCommandAllowed, PathPolicy, ReadPolicy } from "../guards.js";
 import { toJsonSchema } from "../schemas.js";
 import { AgentError, type AgentMode, type AgentRequest, type AgentResult, type AgentRunner } from "./agent-runner.js";
 
-const READ_TOOLS = ["Read", "Glob", "Grep"];
+const READ_TOOLS = new Set(["Read", "Glob", "Grep"]);
 const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 const ASK_TOOL = "mcp__hector__ask";
 
+/** Everything decide() needs to judge one tool call. */
+export interface DecisionContext {
+  mode: AgentMode;
+  cwd: string;
+  write: PathPolicy;
+  tests: PathPolicy;
+  read: ReadPolicy;
+  allowedCommands: string[];
+  skillsEnabled: boolean;
+}
+
+export type Verdict = { ok: true } | { ok: false; reason: string };
+
 /**
  * Runs each step as a Claude Agent SDK session inside the worktree.
- * Read tools are pre-approved; every write and shell call goes through
- * `canUseTool`, which enforces the step's mode, the locked paths and the
- * command allowlist. Anything else (web, external MCP, subagents) is denied.
- * The only MCP tool is the workflow's own in-process `ask`.
+ *
+ * Every tool call is judged by decide() twice over: in a PreToolUse hook (which
+ * runs for every call, including reads that never ask for permission) and in
+ * canUseTool (for calls that do ask). decide() enforces the step's mode, the
+ * readable roots and the read deny-list, component write isolation, locked
+ * tests and the command allowlist. Web tools, subagents and external MCP are
+ * denied; the only MCP tool is the workflow's own in-process `ask`.
  */
 export class ClaudeAgentRunner implements AgentRunner {
   constructor(private readonly config: FlowConfig) {}
@@ -35,14 +53,37 @@ export class ClaudeAgentRunner implements AgentRunner {
       lockedPaths: this.config.lockedPaths,
       allowedCommands: this.config.allowedCommands,
     };
-    const policy = new PathPolicy(scope.root, scope.lockedPaths, scope.writeRoot);
-    const testPolicy = new PathPolicy(scope.root, scope.testPaths ?? scope.lockedPaths);
+    const claudeSkills = req.claudeSkills ?? [];
+    const ctx: DecisionContext = {
+      mode: req.mode,
+      cwd: req.cwd,
+      write: new PathPolicy(scope.root, scope.lockedPaths, scope.writeRoot),
+      tests: new PathPolicy(scope.root, scope.testPaths ?? scope.lockedPaths),
+      read: new ReadPolicy([scope.root, ...(req.readDirs ?? [])], scope.readDeny ?? this.config.readDenyPaths),
+      allowedCommands: scope.allowedCommands,
+      skillsEnabled: claudeSkills.length > 0,
+    };
+
+    const judge = (toolName: string, input: Record<string, unknown>): Verdict => {
+      const verdict = decide(ctx, toolName, input);
+      if (!verdict.ok && !denials.some((d) => d.tool === toolName && d.reason === verdict.reason)) {
+        denials.push({ tool: toolName, reason: verdict.reason });
+      }
+      return verdict;
+    };
+
+    const preToolUse: HookCallback = async (input) => {
+      if (input.hook_event_name !== "PreToolUse") return { continue: true };
+      const verdict = judge(input.tool_name, (input.tool_input ?? {}) as Record<string, unknown>);
+      if (verdict.ok) return { continue: true };
+      return {
+        hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: verdict.reason },
+      };
+    };
 
     const canUseTool: CanUseTool = async (toolName, input) => {
-      const verdict = this.decide(req.mode, toolName, input, policy, testPolicy, req.cwd, scope.allowedCommands);
-      if (verdict.ok) return { behavior: "allow", updatedInput: input };
-      denials.push({ tool: toolName, reason: verdict.reason });
-      return { behavior: "deny", message: verdict.reason };
+      const verdict = judge(toolName, input);
+      return verdict.ok ? { behavior: "allow", updatedInput: input } : { behavior: "deny", message: verdict.reason };
     };
 
     const mcpServers: Options["mcpServers"] = {};
@@ -70,13 +111,17 @@ export class ClaudeAgentRunner implements AgentRunner {
       resume: req.resumeSessionId,
       additionalDirectories: req.readDirs,
       mcpServers,
-      model: this.config.models[req.role],
-      effort: this.config.efforts[req.role],
+      model: req.model ?? this.config.models[req.role],
+      effort: req.effort ?? this.config.efforts[req.role],
       systemPrompt: { type: "preset", preset: "claude_code", append: req.systemPrompt },
       allowedTools,
       disallowedTools: ["WebFetch", "WebSearch", "Task", "Agent"],
       permissionMode: "default",
       canUseTool,
+      hooks: { PreToolUse: [{ hooks: [preToolUse] }] },
+      // Explicit list: a step sees only its own skills, never every skill installed on the machine.
+      skills: claudeSkills,
+      plugins: (req.plugins ?? []).map((path) => ({ type: "local" as const, path, skipMcpDiscovery: true })),
       maxTurns: this.config.policy.maxTurnsPerAgent,
       maxBudgetUsd: this.config.policy.maxBudgetUsdPerAgent,
       settingSources: this.config.loadProjectSettings ? ["project"] : [],
@@ -107,46 +152,64 @@ export class ClaudeAgentRunner implements AgentRunner {
       denials,
     };
   }
+}
 
-  private decide(
-    mode: AgentMode,
-    tool: string,
-    input: Record<string, unknown>,
-    policy: PathPolicy,
-    testPolicy: PathPolicy,
-    cwd: string,
-    allowedCommands: string[],
-  ): { ok: true } | { ok: false; reason: string } {
-    if (READ_TOOLS.includes(tool) || tool === "TodoWrite" || tool === ASK_TOOL) return { ok: true };
+/** The permission rules for one tool call. Pure, so it can be tested without a model. */
+export function decide(ctx: DecisionContext, toolName: string, input: Record<string, unknown>): Verdict {
+  const { mode, cwd } = ctx;
 
-    if (WRITE_TOOLS.has(tool)) {
-      if (mode === "readonly") return { ok: false, reason: "This step is read-only. Return your findings as structured output." };
-      const target = String(input.file_path ?? input.notebook_path ?? "");
-      if (!policy.toRelative(target, cwd)) return { ok: false, reason: `Path ${target} is outside the workspace.` };
-      if (mode === "tests") {
-        // The test author writes exactly where this component's tests live, even outside its folder.
-        return testPolicy.isLocked(target, cwd)
-          ? { ok: true }
-          : { ok: false, reason: `The test author may only write this component's test files (lockedPaths). ${target} is not one.` };
-      }
-      if (!policy.isWritable(target, cwd)) {
-        return { ok: false, reason: `${target} belongs to another component. You may only write under ${policy.writePrefix || "the workspace"}.` };
-      }
-      if (policy.isLocked(target, cwd)) {
-        return {
-          ok: false,
-          reason: `${target} is a locked test file. Fix the production code instead; if you believe the test is wrong, say so in your notes.`,
-        };
-      }
-      return { ok: true };
-    }
-
-    if (tool === "Bash") {
-      if (mode === "readonly") return { ok: false, reason: "This step is read-only." };
-      const verdict = isCommandAllowed(String(input.command ?? ""), allowedCommands);
-      return verdict.ok ? { ok: true } : { ok: false, reason: verdict.reason! };
-    }
-
-    return { ok: false, reason: `Tool ${tool} is not available in this flow.` };
+  if (READ_TOOLS.has(toolName)) return checkRead(ctx, toolName, input);
+  if (toolName === "TodoWrite" || toolName === ASK_TOOL) return { ok: true };
+  if (toolName === "Skill") {
+    return ctx.skillsEnabled ? { ok: true } : { ok: false, reason: "No skills are enabled for this step." };
   }
+
+  if (WRITE_TOOLS.has(toolName)) {
+    if (mode === "readonly") return { ok: false, reason: "This step is read-only. Return your findings as structured output." };
+    const target = String(input.file_path ?? input.notebook_path ?? "");
+    if (!ctx.write.toRelative(target, cwd)) return { ok: false, reason: `Path ${target} is outside the workspace.` };
+    const readable = ctx.read.check(target, cwd);
+    if (!readable.ok) return readable; // never edit secrets either
+    if (mode === "tests") {
+      // The test author writes exactly where this component's tests live, even outside its folder.
+      return ctx.tests.isLocked(target, cwd)
+        ? { ok: true }
+        : { ok: false, reason: `The test author may only write this component's test files (lockedPaths). ${target} is not one.` };
+    }
+    if (!ctx.write.isWritable(target, cwd)) {
+      return { ok: false, reason: `${target} belongs to another component. You may only write under ${ctx.write.writePrefix || "the workspace"}.` };
+    }
+    if (ctx.write.isLocked(target, cwd)) {
+      return {
+        ok: false,
+        reason: `${target} is a locked test file. Fix the production code instead; if you believe the test is wrong, say so in your notes.`,
+      };
+    }
+    return { ok: true };
+  }
+
+  if (toolName === "Bash") {
+    if (mode === "readonly") return { ok: false, reason: "This step is read-only." };
+    const verdict = isCommandAllowed(String(input.command ?? ""), ctx.allowedCommands);
+    return verdict.ok ? { ok: true } : { ok: false, reason: verdict.reason! };
+  }
+
+  return { ok: false, reason: `Tool ${toolName} is not available in this flow.` };
+}
+
+/** Read, Glob and Grep: the file or folder they target must be readable. */
+function checkRead(ctx: DecisionContext, toolName: string, input: Record<string, unknown>): Verdict {
+  if (toolName === "Read") return ctx.read.check(String(input.file_path ?? ""), ctx.cwd);
+
+  const targets: string[] = [typeof input.path === "string" && input.path ? input.path : ctx.cwd];
+  // An absolute Glob pattern targets the folder before its first wildcard.
+  if (toolName === "Glob" && typeof input.pattern === "string" && isAbsolute(input.pattern)) {
+    const staticPart = input.pattern.split(/[*?[{]/)[0]!;
+    targets.push(staticPart.endsWith("/") ? staticPart : dirname(staticPart));
+  }
+  for (const t of targets) {
+    const v = ctx.read.check(t, ctx.cwd);
+    if (!v.ok) return v;
+  }
+  return { ok: true };
 }

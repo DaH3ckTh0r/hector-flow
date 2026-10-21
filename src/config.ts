@@ -15,7 +15,33 @@ export const RoleSchema = z.enum([
 ]);
 export type Role = z.infer<typeof RoleSchema>;
 
-const EffortSchema = z.enum(["low", "medium", "high", "xhigh", "max"]);
+export const EffortSchema = z.enum(["low", "medium", "high", "xhigh", "max"]);
+export type Effort = z.infer<typeof EffortSchema>;
+
+/** Secret-looking files no agent may read. Override with `readDenyPaths` (set [] to disable). */
+export const DEFAULT_READ_DENY = [
+  "**/.env",
+  "**/.env.*",
+  "**/*.pem",
+  "**/*.key",
+  "**/*.pfx",
+  "**/*.p12",
+  "**/id_rsa*",
+  "**/id_ed25519*",
+  "**/.npmrc",
+  "**/.pypirc",
+  "**/.netrc",
+  "**/secrets.json",
+  "**/*.secrets.json",
+  "**/appsettings.*.local.json",
+  "**/local.settings.json",
+  "~/.ssh/**",
+  "~/.aws/**",
+  "~/.azure/**",
+  "~/.config/gcloud/**",
+  "~/.kube/**",
+  "~/.docker/config.json",
+];
 
 /**
  * A deployable part of the system — backend, middleware, frontend — with its
@@ -67,6 +93,37 @@ export const ConfigSchema = z.object({
   models: z.partialRecord(RoleSchema, z.string()).default({}),
   /** Reasoning effort per step. */
   efforts: z.partialRecord(RoleSchema, EffortSchema).default({}),
+  /**
+   * Extra folders with step skills (<dir>/<role>/SKILL.md), relative to the
+   * primary repo, searched in order before <repo>/.hector/skills and the built-ins.
+   */
+  skillDirs: z.array(z.string()).default([]),
+  /** Claude Code skills each step may use, by name (or plugin:skill). Merged with the step skill's front-matter. */
+  claudeSkills: z.partialRecord(RoleSchema, z.array(z.string())).default({}),
+  /** Local Claude Code plugin folders (skills, agents, hooks) loaded into every agent. Relative to the primary repo. */
+  pluginDirs: z.array(z.string()).default([]),
+  /**
+   * Paths agents may never read, even inside their workspace. Globs: relative
+   * ones match anywhere under a readable root; ones starting with ~ or / are absolute.
+   */
+  readDenyPaths: z.array(z.string()).default(DEFAULT_READ_DENY),
+  /** Independent reviewers ("judgment day"). All must approve. Default: one reviewer with the review role's model. */
+  review: z
+    .object({
+      judges: z
+        .array(
+          z.object({
+            name: z.string().regex(/^[a-z][a-z0-9-]*$/, "judge names: lowercase, digits, dashes"),
+            model: z.string().optional(),
+            effort: EffortSchema.optional(),
+            /** Extra instructions for this judge, e.g. "Focus on security and data exposure." */
+            focus: z.string().optional(),
+          }),
+        )
+        .min(1)
+        .default([{ name: "reviewer" }]),
+    })
+    .prefault({}),
   policy: z
     .object({
       /** Total automatic repairs per run, across every route. */

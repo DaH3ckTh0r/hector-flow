@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import type { z } from "zod";
 import { resolveComponents, type Component } from "./components.js";
-import type { FlowConfig, Role } from "./config.js";
+import type { Effort, FlowConfig, Role } from "./config.js";
 import { isCommandAllowed, PathPolicy } from "./guards.js";
 import { LessonStore, type ErrorLesson } from "./lessons.js";
 import { RunLog } from "./log.js";
@@ -18,6 +18,7 @@ import {
 } from "./prompts.js";
 import type { AgentMode, AgentResult, AgentRunner, AgentScope } from "./runner/agent-runner.js";
 import { runDag, validateDag } from "./scheduler.js";
+import { loadSkills, resolveStep, type SkillSet } from "./skills.js";
 import {
   AnswerSchema,
   DiagnosisSchema,
@@ -183,6 +184,8 @@ export async function implementTicket(opts: {
   const runId = `${ticket.id}-${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 6)}`;
   const log = await RunLog.create(paths.runs, runId);
   const lessons = await LessonStore.open(paths.lessons);
+  const pluginPaths = config.pluginDirs.map((d) => resolve(primaryRoot, d));
+  let skillSet: SkillSet | undefined;
   const repoLock = new KeyedMutex();
 
   let costUsd = 0;
@@ -242,6 +245,7 @@ export async function implementTicket(opts: {
       lockedPaths: p.comp.repo.lockedPaths,
       testPaths: p.comp.lockedPaths,
       allowedCommands: p.comp.allowedCommands,
+      readDeny: config.readDenyPaths,
     };
   }
 
@@ -257,9 +261,17 @@ export async function implementTicket(opts: {
     place: Place,
     prompt: string,
     schema: S,
-    extra: { attempt?: number; resumeSessionId?: string; ask?: (q: string) => Promise<string> } = {},
+    extra: {
+      attempt?: number;
+      resumeSessionId?: string;
+      ask?: (q: string) => Promise<string>;
+      /** Per-call overrides (review judges). */
+      model?: string;
+      effort?: Effort;
+    } = {},
   ): Promise<AgentResult<z.infer<S>>> {
     const { attempt } = extra;
+    const stepSkill = resolveStep(skillSet!, role, config);
     await log.emit({ type: "step.start", step, attempt });
     const t0 = Date.now();
     try {
@@ -267,13 +279,17 @@ export async function implementTicket(opts: {
         role,
         mode,
         cwd: dirOf(place),
-        systemPrompt: systemPrompt(role, lessons.guidelinesFor(role)),
+        systemPrompt: systemPrompt(stepSkill.instructions, lessons.guidelinesFor(role)),
         prompt,
         schema,
         resumeSessionId: extra.resumeSessionId,
         ask: extra.ask,
         scope: scopeFor(place),
         readDirs: readDirsFor(place),
+        model: extra.model ?? stepSkill.model,
+        effort: extra.effort ?? stepSkill.effort,
+        claudeSkills: stepSkill.claudeSkills,
+        plugins: pluginPaths,
       });
       costUsd += res.costUsd;
       for (const d of res.denials) await log.emit({ type: "guard", step, action: `denied ${d.tool}`, detail: d.reason });
@@ -703,6 +719,16 @@ export async function implementTicket(opts: {
   }
 
   try {
+    // ── Step skills ──────────────────────────────────────────────────────
+    skillSet = await loadSkills(primaryRoot, config);
+    for (const s of Object.values(skillSet.skills)) {
+      for (const w of s.warnings) await log.emit({ type: "info", message: `skill ${s.role} (${s.source}): ${w}` });
+    }
+    const custom = Object.values(skillSet.skills).filter((s) => s.sourceKind !== "builtin");
+    if (custom.length) {
+      await log.emit({ type: "info", message: `custom skills: ${custom.map((s) => `${s.role} (${s.sourceKind})`).join(", ")}` });
+    }
+
     // ── Workspaces ───────────────────────────────────────────────────────
     const resolved = await resolveComponents(primaryRoot, config);
     for (const root of new Set(resolved.map((c) => c.repoRoot))) await assertClean(root);
@@ -812,9 +838,41 @@ export async function implementTicket(opts: {
     for (const comp of involved) await untilGreen(`stabilize:${comp.name}`, comp, fullCheck(comp));
 
     // ── VERIFICATION ─────────────────────────────────────────────────────
+    /**
+     * "Judgment day": every configured judge reviews the same diff on its own,
+     * in parallel, without seeing the others. The change is approved only if
+     * every judge approves and no merged finding is a blocker.
+     */
+    async function judgeReview(round: number): Promise<Review> {
+      const diffs = await allDiffs();
+      const judges = config.review.judges;
+      const verdicts = await Promise.all(
+        judges.map((j) =>
+          agentFull(
+            judges.length === 1 ? "review" : `review:${j.name}`,
+            "review",
+            "readonly",
+            primary,
+            prompts.review(ticket, diffs, infos, j.focus),
+            ReviewSchema,
+            { attempt: round, model: j.model, effort: j.effort },
+          ).then((r) => ({ judge: j.name, review: r.output })),
+        ),
+      );
+      const merged = mergeReviews(verdicts);
+      if (judges.length > 1) {
+        await log.artifact(`review-${round}.json`, { ...merged, judges: verdicts.map((v) => ({ judge: v.judge, approved: v.review.approved })) });
+        await log.emit({
+          type: "info",
+          message: `review round ${round}: ${verdicts.map((v) => `${v.judge} ${v.review.approved ? "approves" : "rejects"}`).join(", ")} → ${merged.approved ? "approved" : "not approved"}`,
+        });
+      }
+      return merged;
+    }
+
     let review: Review;
     for (;;) {
-      review = await agent("review", "review", primary, prompts.review(ticket, await allDiffs(), infos), ReviewSchema, reviewRounds + 1);
+      review = await judgeReview(reviewRounds + 1);
       const serious = review.issues.filter((i) => i.severity !== "minor");
       if (serious.length === 0 || reviewRounds >= config.policy.reviewRounds) break;
       reviewRounds++;
@@ -904,6 +962,35 @@ export async function implementTicket(opts: {
     }
     return s;
   }
+}
+
+const SEVERITY_RANK = { minor: 0, major: 1, blocker: 2 } as const;
+
+/**
+ * Merges independent reviews. Approved only if every judge approved and no
+ * finding is a blocker. Findings on the same component, file and description
+ * (case and spacing ignored) are merged, keeping the highest severity; with
+ * several judges each finding names the judges that raised it.
+ */
+export function mergeReviews(verdicts: Array<{ judge: string; review: Review }>): Review {
+  const byKey = new Map<string, { issue: Review["issues"][number]; judges: string[] }>();
+  for (const { judge, review } of verdicts) {
+    for (const issue of review.issues) {
+      const key = [issue.component, issue.file, issue.description.toLowerCase().replace(/\s+/g, " ").trim()].join("|");
+      const seen = byKey.get(key);
+      if (!seen) byKey.set(key, { issue: { ...issue }, judges: [judge] });
+      else {
+        if (SEVERITY_RANK[issue.severity] > SEVERITY_RANK[seen.issue.severity]) seen.issue.severity = issue.severity;
+        if (!seen.judges.includes(judge)) seen.judges.push(judge);
+      }
+    }
+  }
+  const several = verdicts.length > 1;
+  const issues = [...byKey.values()].map(({ issue, judges }) =>
+    several ? { ...issue, description: `[${judges.join(", ")}] ${issue.description}` } : issue,
+  );
+  const approved = verdicts.every((v) => v.review.approved) && !issues.some((i) => i.severity === "blocker");
+  return { approved, issues };
 }
 
 /** Cheap deterministic signature from tool output: compiler codes like TS2345, CS8862. */

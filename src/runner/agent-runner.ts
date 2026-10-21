@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import type { Role } from "../config.js";
+import type { Effort, Role } from "../config.js";
 
 /**
  * What an agent is allowed to do to the worktree.
@@ -34,6 +34,13 @@ export interface AgentRequest<S extends z.ZodType> {
   scope?: AgentScope;
   /** Extra absolute folders the agent may read (other repos of the same ticket). */
   readDirs?: string[];
+  /** Model and effort resolved for this step (config over skill front-matter). */
+  model?: string;
+  effort?: Effort;
+  /** Claude Code skills this step may use. An empty list hides all skills from the agent. */
+  claudeSkills?: string[];
+  /** Absolute paths of local Claude Code plugins to load (skills only; their MCP servers are not loaded). */
+  plugins?: string[];
 }
 
 export interface AgentScope {
@@ -44,6 +51,8 @@ export interface AgentScope {
   /** This component's own test globs: the only places its test author may write (may be outside writeRoot). */
   testPaths?: string[];
   allowedCommands: string[];
+  /** Paths no tool may read (secrets). Relative globs match under any readable root; ~ and / are absolute. */
+  readDeny?: string[];
 }
 
 export interface AgentResult<T> {

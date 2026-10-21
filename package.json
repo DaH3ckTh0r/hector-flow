@@ -1,6 +1,6 @@
 {
   "name": "hector-flow",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Programmatic AI coding flow: TypeScript controls the workflow, agents only reason inside each step.",
   "type": "module",
   "bin": {

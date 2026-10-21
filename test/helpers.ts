@@ -17,6 +17,12 @@ export interface Call {
   sessionId: string;
   cwd: string;
   readDirs: string[];
+  systemPrompt: string;
+  model?: string;
+  effort?: string;
+  claudeSkills: string[];
+  plugins: string[];
+  prompt: string;
 }
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -47,7 +53,21 @@ export class ScriptedRunner implements AgentRunner {
     const r = req as unknown as Req;
     const key = this.keyOf(r);
     const sessionId = req.resumeSessionId ?? `${req.role}-${++this.n}`;
-    this.calls.push({ key, role: req.role, resume: req.resumeSessionId, hasAsk: !!req.ask, sessionId, cwd: req.cwd, readDirs: req.readDirs ?? [] });
+    this.calls.push({
+      key,
+      role: req.role,
+      resume: req.resumeSessionId,
+      hasAsk: !!req.ask,
+      sessionId,
+      cwd: req.cwd,
+      readDirs: req.readDirs ?? [],
+      systemPrompt: req.systemPrompt,
+      model: req.model,
+      effort: req.effort,
+      claudeSkills: req.claudeSkills ?? [],
+      plugins: req.plugins ?? [],
+      prompt: req.prompt,
+    });
     this.systemPrompts[req.role] = req.systemPrompt;
     const next = this.script[key]?.shift();
     if (!next) throw new Error(`No scripted response left for ${key}`);
