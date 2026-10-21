@@ -19,6 +19,7 @@ import {
 } from "./prompts.js";
 import type { AgentMode, AgentRequest, AgentResult, AgentRunner, AgentScope } from "./runner/agent-runner.js";
 import { runDag, validateDag } from "./scheduler.js";
+import { resolveRuntime } from "./runtimes.js";
 import { loadSkills, resolveStep, type SkillSet } from "./skills.js";
 import {
   AnswerSchema,
@@ -310,14 +311,14 @@ export async function implementTicket(opts: {
       attempt?: number;
       resumeSessionId?: string;
       ask?: (q: string) => Promise<string>;
-      /** Per-call overrides (review judges). */
-      model?: string;
-      effort?: Effort;
+      /** Review judge: its own runtime, model, effort. */
+      judge?: FlowConfig["review"]["judges"][number];
     } = {},
   ): Promise<AgentResult<z.infer<S>>> {
     const { attempt } = extra;
     const stepSkill = resolveStep(skillSet!, role, config);
-    await log.emit({ type: "step.start", step, attempt });
+    const choice = resolveRuntime(config, role, stepSkill, extra.judge);
+    await log.emit({ type: "step.start", step, attempt, ...(choice.runtime !== "claude" ? { runtime: choice.runtime } : {}) });
     const t0 = Date.now();
     try {
       const res = await runner.run({
@@ -331,8 +332,9 @@ export async function implementTicket(opts: {
         ask: extra.ask,
         scope: scopeFor(place),
         readDirs: readDirsFor(place),
-        model: extra.model ?? stepSkill.model,
-        effort: extra.effort ?? stepSkill.effort,
+        runtime: choice.runtime,
+        model: choice.model,
+        effort: choice.effort,
         claudeSkills: stepSkill.claudeSkills,
         plugins: pluginPaths,
         memory: memoryToolsFor(role, step),
@@ -908,7 +910,7 @@ export async function implementTicket(opts: {
             primary,
             prompts.review(ticket, diffs, infos, j.focus),
             ReviewSchema,
-            { attempt: round, model: j.model, effort: j.effort },
+            { attempt: round, judge: j },
           ).then((r) => ({ judge: j.name, review: r.output })),
         ),
       );

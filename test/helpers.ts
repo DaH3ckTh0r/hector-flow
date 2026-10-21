@@ -25,6 +25,7 @@ export interface Call {
   prompt: string;
   memoryTools: string[];
   mcpServers: string[];
+  runtime?: string;
 }
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -71,6 +72,7 @@ export class ScriptedRunner implements AgentRunner {
       prompt: req.prompt,
       memoryTools: Object.keys(req.memory ?? {}),
       mcpServers: req.mcpServers ?? [],
+      runtime: req.runtime,
     });
     this.systemPrompts[req.role] = req.systemPrompt;
     const next = this.script[key]?.shift();

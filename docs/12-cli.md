@@ -39,7 +39,8 @@ Comprueba, en orden:
 5. Que `buildCommand`, `testCommand` y `lintCommand` de cada componente **pasan sobre el código actual**.
 6. Qué skills de pasos están personalizadas, y sus avisos (⚠).
 7. Que existen las carpetas de `pluginDirs`, y cuántos jueces revisan si hay más de uno.
-8. Que el ticket se puede leer y tiene criterios.
+8. Si algún paso usa otro runtime: qué runtime ejecuta cada paso, que `opencode` está en el PATH (✖ si no), que existe `runtime.codex.path` si lo defines, y avisos (⚠) de lo que Codex no aplica y de servidores SSE que Codex no soporta. Ver [16-runtimes.md](16-runtimes.md).
+9. Que el ticket se puede leer y tiene criterios.
 
 Símbolos: `✔` correcto, `⚠` aviso, `✖` error. Termina con `Ready to run.` (código 0) o `N check(s) failed.` (código 1).
 

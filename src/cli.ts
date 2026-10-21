@@ -7,7 +7,7 @@ import { loadConfig, RoleSchema, type Role } from "./config.js";
 import { ejectSkills, loadSkills, resolveStep } from "./skills.js";
 import { git } from "./tools/git.js";
 import { distillTicket } from "./distill.js";
-import { ClaudeAgentRunner } from "./runner/claude-runner.js";
+import { createRunner } from "./runtimes.js";
 import { readTicket } from "./ticket.js";
 import { approveTicket, loopStatus, rejectTicket, requeueTicket, runLoop, type LoopMode } from "./loop.js";
 import { MemoryStore, renderMemories } from "./memory.js";
@@ -203,58 +203,63 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  const runner = new ClaudeAgentRunner(config);
+  // One router for every runtime; close() stops servers it started (OpenCode, tool bridge).
+  const runner = createRunner(config);
+  try {
 
-  if (command === "start") {
-    const mode = values.mode as LoopMode | undefined;
-    if (mode && !["manual", "supervised", "auto"].includes(mode)) return (console.log("--mode must be manual, supervised or auto"), 2);
-    const max = values.max ? Number(values.max) : undefined;
-    if (max !== undefined && !(max > 0)) return (console.log("--max must be a positive number"), 2);
-    const stop = new AbortController();
-    let interrupts = 0;
-    process.on("SIGINT", () => {
-      if (++interrupts > 1) process.exit(130);
-      console.log("\nStopping after the current ticket (Ctrl+C again to quit now)…");
-      stop.abort();
-    });
-    const res = await runLoop({ repo, config, runner, mode, once: values.once, maxTickets: max, signal: stop.signal });
-    console.log(`\nLoop finished: ${res.processed.length} ticket(s) processed.`);
-    for (const t of res.processed) console.log(`  ${t.id.padEnd(14)} ${t.status}`);
-    return 0;
-  }
-
-  if (command === "distill") {
-    if (!values["ticket-id"]) return (console.log(USAGE), 2);
-    const res = await distillTicket({ repo, ticketId: values["ticket-id"], config, runner });
-    if ("reason" in res) {
-      console.log(res.reason);
+    if (command === "start") {
+      const mode = values.mode as LoopMode | undefined;
+      if (mode && !["manual", "supervised", "auto"].includes(mode)) return (console.log("--mode must be manual, supervised or auto"), 2);
+      const max = values.max ? Number(values.max) : undefined;
+      if (max !== undefined && !(max > 0)) return (console.log("--max must be a positive number"), 2);
+      const stop = new AbortController();
+      let interrupts = 0;
+      process.on("SIGINT", () => {
+        if (++interrupts > 1) process.exit(130);
+        console.log("\nStopping after the current ticket (Ctrl+C again to quit now)…");
+        stop.abort();
+      });
+      const res = await runLoop({ repo, config, runner, mode, once: values.once, maxTickets: max, signal: stop.signal });
+      console.log(`\nLoop finished: ${res.processed.length} ticket(s) processed.`);
+      for (const t of res.processed) console.log(`  ${t.id.padEnd(14)} ${t.status}`);
       return 0;
     }
-    console.log(`${res.added} new guideline(s):`);
-    for (const l of res.lessons) console.log(`- [${l.role}] ${l.guideline}`);
-    return 0;
+
+    if (command === "distill") {
+      if (!values["ticket-id"]) return (console.log(USAGE), 2);
+      const res = await distillTicket({ repo, ticketId: values["ticket-id"], config, runner });
+      if ("reason" in res) {
+        console.log(res.reason);
+        return 0;
+      }
+      console.log(`${res.added} new guideline(s):`);
+      for (const l of res.lessons) console.log(`- [${l.role}] ${l.guideline}`);
+      return 0;
+    }
+
+    if (!values.ticket) return (console.log(USAGE), 2);
+    const ticket = await readTicket(at(values.ticket));
+    console.log(`hector-flow · ${ticket.id}: ${ticket.title}\n`);
+
+    const summary = await implementTicket({ repo, ticket, config, runner });
+
+    console.log(`\n${"─".repeat(60)}`);
+    console.log(`status   ${summary.status}`);
+    for (const r of summary.repos) console.log(`repo     ${r.name}: ${r.branch} → ${r.worktree}`);
+    console.log(`tasks    ${summary.tasks} (max ${summary.maxConcurrentWorkers} in parallel)`);
+    console.log(`repairs  ${summary.repairAttempts}   review rounds ${summary.reviewRounds}   questions ${summary.questionsAsked}`);
+    console.log(`cost     $${summary.costUsd.toFixed(4)}   time ${(summary.durationMs / 1000).toFixed(0)}s`);
+    console.log(`log      ${summary.runDir}`);
+    if (summary.reason) console.log(`\n${summary.reason}`);
+    if (summary.openAssumptions.length) {
+      console.log(`\nAssumptions the workers made without an authoritative answer — check these:`);
+      for (const q of summary.openAssumptions) console.log(`- (${q.asker}) ${q.question}\n  → ${q.answer}`);
+    }
+
+    return summary.status === "completed" ? 0 : summary.status === "needs_human" ? 3 : 1;
+  } finally {
+    await runner.close();
   }
-
-  if (!values.ticket) return (console.log(USAGE), 2);
-  const ticket = await readTicket(at(values.ticket));
-  console.log(`hector-flow · ${ticket.id}: ${ticket.title}\n`);
-
-  const summary = await implementTicket({ repo, ticket, config, runner });
-
-  console.log(`\n${"─".repeat(60)}`);
-  console.log(`status   ${summary.status}`);
-  for (const r of summary.repos) console.log(`repo     ${r.name}: ${r.branch} → ${r.worktree}`);
-  console.log(`tasks    ${summary.tasks} (max ${summary.maxConcurrentWorkers} in parallel)`);
-  console.log(`repairs  ${summary.repairAttempts}   review rounds ${summary.reviewRounds}   questions ${summary.questionsAsked}`);
-  console.log(`cost     $${summary.costUsd.toFixed(4)}   time ${(summary.durationMs / 1000).toFixed(0)}s`);
-  console.log(`log      ${summary.runDir}`);
-  if (summary.reason) console.log(`\n${summary.reason}`);
-  if (summary.openAssumptions.length) {
-    console.log(`\nAssumptions the workers made without an authoritative answer — check these:`);
-    for (const q of summary.openAssumptions) console.log(`- (${q.asker}) ${q.question}\n  → ${q.answer}`);
-  }
-
-  return summary.status === "completed" ? 0 : summary.status === "needs_human" ? 3 : 1;
 }
 
 main().then(

@@ -33,6 +33,7 @@ Invalid config at /Users/tu/mi-repo/hector-flow.config.json:
   "claudeSkills": { "<rol>": ["<skill>"] },
   "pluginDirs": [],
   "review": { "judges": [{ "name": "reviewer" }] },
+  "runtime": { "default": "claude", "steps": { "<rol>": "codex" }, "codex": {}, "opencode": {} },
 
   // Seguridad
   "readDenyPaths": ["**/.env", "…"],
@@ -187,6 +188,8 @@ Esfuerzo de razonamiento por rol: `low`, `medium`, `high`, `xhigh` o `max`. Si e
 
 **Precedencia del modelo y el esfuerzo de un paso:** `models.<rol>` / `efforts.<rol>` de la config → `model` / `effort` del front-matter de la skill del paso → valor por defecto de Claude Code. En la revisión, el `model` y `effort` de cada juez van por delante de todo.
 
+`models`, `efforts` y el front-matter son modelos de **Claude**: un paso que corre en Codex u OpenCode toma el modelo de `runtime` (ver abajo).
+
 ### `skillDirs` — string[], por defecto `[]`
 
 Carpetas adicionales con skills de pasos (`<carpeta>/<rol>/SKILL.md`), relativas al repo principal. Se buscan en orden, antes de `<repo>/.hector/skills` y de las skills de serie. Guía completa: [13-skills.md](13-skills.md).
@@ -219,6 +222,7 @@ Carpetas de plugins locales de Claude Code, relativas al repo principal. Se carg
 | `name` | texto (minúsculas, dígitos, guiones) | Nombre del juez. Aparece en los hallazgos y en los artefactos. |
 | `model` | texto, opcional | Modelo de este juez. Por defecto, el del rol `review`. Usar modelos distintos da opiniones más independientes. |
 | `effort` | esfuerzo, opcional | Esfuerzo de este juez. |
+| `runtime` | `claude` \| `codex` \| `opencode`, opcional | Runtime de este juez (por defecto, el del paso `review`). Su `model` es un modelo de ese runtime. Ver [16-runtimes.md](16-runtimes.md). |
 | `focus` | texto, opcional | Instrucciones adicionales solo para este juez, enviadas en un bloque `<review_focus>`. |
 
 Por defecto hay un único juez (`reviewer`) y la revisión funciona como siempre. Con dos o más:
@@ -229,6 +233,29 @@ Por defecto hay un único juez (`reviewer`) y la revisión funciona como siempre
 - los hallazgos fusionados se enrutan a los implementadores como siempre.
 
 Más en [05-flujo.md](05-flujo.md#7-review--revisión).
+
+### `runtime` — qué runtime ejecuta cada paso
+
+```json
+"runtime": {
+  "default": "claude",
+  "steps": { "coder": { "use": "codex", "model": "gpt-5.5-codex" }, "qaPlan": "opencode" },
+  "codex": { "model": "gpt-5.5-codex", "effort": "medium", "networkAccess": false },
+  "opencode": { "model": "anthropic/claude-sonnet-4-5", "hostname": "127.0.0.1", "port": 0 }
+}
+```
+
+| Campo | Por defecto | Descripción |
+|---|---|---|
+| `default` | `"claude"` | Runtime de los pasos que no están en `steps`. |
+| `steps.<rol>` | — | `"claude"`, `"codex"`, `"opencode"`, o `{ "use", "model"?, "effort"? }`. |
+| `codex.model`, `codex.effort` | defaults de Codex | Modelo y esfuerzo de los pasos en Codex. |
+| `codex.networkAccess` | `false` | Red para los comandos dentro del sandbox. |
+| `codex.path` | binario del SDK | Otro binario `codex`. |
+| `opencode.model` | default de OpenCode | `"proveedor/modelo"`. |
+| `opencode.hostname`, `opencode.port` | `127.0.0.1`, `0` | Dónde escucha `opencode serve` (`0`: puerto libre). |
+
+Codex **no aplica** `readDenyPaths` ni `allowedCommands` (aísla con su sandbox); OpenCode sí, igual que Claude. Guía completa, tabla de aislamiento y recetas: [16-runtimes.md](16-runtimes.md).
 
 ### `readDenyPaths` — string[], por defecto una lista de archivos de secretos
 
@@ -358,4 +385,5 @@ Si es `true`, cada agente carga la configuración de proyecto de Claude Code del
 
 - `examples/hector-flow.config.json` — un solo repo .NET.
 - `examples/multi-component.config.json` — API .NET en un monorepo con su proyecto de tests aparte, Azure Functions en otro repo y una SPA React en un tercero.
+- `examples/runtimes.config.json` — Codex implementa, OpenCode escribe el plan de QA, y la revisión la hacen un juez en Claude y otro en Codex.
 - `examples/tutorial/tienda-api/hector-flow.config.json` — la config del tutorial, dos repos Node.

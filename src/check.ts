@@ -2,7 +2,8 @@ import { existsSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { loadSkills } from "./skills.js";
 import { resolveComponents } from "./components.js";
-import type { FlowConfig } from "./config.js";
+import { RoleSchema, type FlowConfig } from "./config.js";
+import { resolveRuntime, runtimesInUse } from "./runtimes.js";
 import { isCommandAllowed } from "./guards.js";
 import { readTicket } from "./ticket.js";
 import { git } from "./tools/git.js";
@@ -121,6 +122,8 @@ export async function preflight(opts: {
     add({ ok: true, label: `review by ${judges.length} independent judges: ${judges.map((j) => j.name).join(", ")}` });
   }
 
+  for (const line of await checkRuntimes(opts.config)) add(line);
+
   const b = opts.config.backlog;
   if (b) {
     if (b.type === "folder") {
@@ -157,4 +160,49 @@ export async function preflight(opts: {
     }
   }
   return lines;
+}
+
+/** Which runtimes the config routes to, and whether each one can start here. */
+export async function checkRuntimes(
+  config: FlowConfig,
+  which: (bin: string) => Promise<boolean> = onPath,
+): Promise<CheckLine[]> {
+  const lines: CheckLine[] = [];
+  const used = runtimesInUse(config);
+  if (used.size === 1 && used.has("claude")) return lines;
+  const routes = RoleSchema.options.map(
+    (role) => `${role}=${resolveRuntime(config, role, {}).runtime}`,
+  );
+  lines.push({ ok: true, label: `runtimes: ${routes.join(" ")}` });
+  if (used.has("codex")) {
+    const bin = config.runtime.codex.path;
+    lines.push({
+      ok: bin ? existsSync(bin) : true,
+      label: bin ? `codex binary ${bin} exists` : "codex: using the CLI bundled with @openai/codex-sdk",
+    });
+    lines.push({
+      ok: true,
+      warn: true,
+      label: "codex steps: the read deny-list and the command allowlist are not enforced",
+      detail: "Codex has no per-call permission hook. Its OS sandbox limits writes to the component folder and blocks the network; locked tests and stray files are still reverted by the workflow. Keep secrets out of the worktree.",
+    });
+    const sse = Object.entries(config.mcpServers).filter(([, s]) => "type" in s && s.type === "sse").map(([n]) => n);
+    if (sse.length) lines.push({ ok: true, warn: true, label: `codex cannot use SSE MCP servers: ${sse.join(", ")}` });
+  }
+  if (used.has("opencode")) {
+    const found = await which("opencode");
+    lines.push({
+      ok: found,
+      label: "opencode is installed (on PATH)",
+      detail: found ? undefined : "Install it (npm i -g opencode-ai) or route those steps to another runtime.",
+    });
+    if (!config.runtime.opencode.model) lines.push({ ok: true, warn: true, label: "runtime.opencode.model is not set: OpenCode will use its own default model" });
+  }
+  return lines;
+}
+
+async function onPath(bin: string): Promise<boolean> {
+  const dirs = (process.env.PATH ?? "").split(process.platform === "win32" ? ";" : ":");
+  const names = process.platform === "win32" ? [`${bin}.cmd`, `${bin}.exe`, bin] : [bin];
+  return dirs.some((d) => d && names.some((n) => existsSync(resolve(d, n))));
 }

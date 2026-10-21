@@ -102,6 +102,19 @@ El flujo se detiene a propósito para que decidas tú. Los worktrees de tarea se
 | `N open assumption(s): review before merging` | Modo `auto` con supuestos abiertos. | Revisa los supuestos y `approve`, o desactiva `autoMergeRequiresNoAssumptions`. |
 | `⚠ could not report back to …` | No se pudo comentar en GitHub/ADO. | Revisa el permiso de escritura del token; el bucle sigue igualmente. |
 
+## Runtimes (Codex, OpenCode)
+
+| Mensaje | Causa | Solución |
+|---|---|---|
+| `✖ opencode is installed (on PATH)` (en `check`) | Un paso usa OpenCode y el binario no está. | `npm i -g opencode-ai`, o envía esos pasos a otro runtime. |
+| `OpenCode failed: … ProviderAuthError` / `could not create a session` | OpenCode no tiene credenciales del proveedor, o el modelo no existe. | `opencode auth login`; revisa que `runtime.opencode.model` sea `proveedor/modelo` válido. |
+| `use "provider/model"` (al cargar la config) | `runtime.opencode.model` sin proveedor. | Escríbelo como `anthropic/claude-sonnet-4-5`, `openai/gpt-5.5`… |
+| `Codex failed: …` al empezar el paso | Codex sin sesión iniciada o sin `OPENAI_API_KEY`, o modelo desconocido. | `npx codex login`; revisa `runtime.codex.model`. |
+| `Codex did not return JSON` | El modelo terminó sin respuesta estructurada (por ejemplo, se quedó sin turnos). | Reintenta; sube `effort` o usa un modelo más capaz para ese paso. |
+| `denied edit — … is a locked test file` (con OpenCode) | Igual que con Claude: el agente intentó tocar un test bloqueado. | Normal y esperado. |
+| `⚠ codex cannot use SSE MCP servers` | Codex solo soporta servidores stdio y HTTP. | Usa la variante HTTP del servidor, o deja ese paso en Claude u OpenCode. |
+| Un juez en otro runtime usa un modelo de Claude por error | `models.review` o el front-matter nombran modelos de Claude y no se aplican fuera de Claude. | Define `model` en el juez o en `runtime.<nombre>.model`. |
+
 ## Otros problemas
 
 | Síntoma | Causa probable | Solución |

@@ -1,0 +1,21 @@
+{
+  "testCommand": "npm test",
+  "lockedPaths": ["test/**"],
+  "allowedCommands": ["npm test", "npx tsc"],
+  "models": { "plan": "opus", "diagnose": "opus", "coder": "sonnet" },
+  "runtime": {
+    "default": "claude",
+    "steps": {
+      "coder": { "use": "codex", "model": "gpt-5.5-codex", "effort": "high" },
+      "qaPlan": "opencode"
+    },
+    "codex": { "networkAccess": false },
+    "opencode": { "model": "anthropic/claude-haiku-4-5" }
+  },
+  "review": {
+    "judges": [
+      { "name": "claude", "model": "opus", "focus": "Focus on security and data exposure." },
+      { "name": "codex", "runtime": "codex", "model": "gpt-5.5" }
+    ]
+  }
+}

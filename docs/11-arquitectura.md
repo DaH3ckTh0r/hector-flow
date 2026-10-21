@@ -19,13 +19,18 @@ src/
 ├── memory.ts              Memoria persistente: guardar, buscar (tf-idf), validar por ejecución
 ├── backlog.ts             Adaptadores de backlog: carpeta, GitHub Issues, Azure DevOps
 ├── loop.ts                Bucle continuo, estado, bloqueo, modos, fusión verificada, approve/reject/requeue
+├── runtimes.ts            resolveRuntime (runtime/modelo/esfuerzo por paso), RouterRunner, createRunner
+├── tool-bridge.ts         Servidor MCP HTTP local: ask y memoria para Codex y OpenCode
 ├── distill.ts             Comando distill
 ├── check.ts               Comando check
 ├── clean.ts               Comando clean
 ├── log.ts                 events.jsonl y artefactos
 ├── runner/
 │   ├── agent-runner.ts    Interfaz AgentRunner: la frontera entre el flujo y la IA
-│   └── claude-runner.ts   Implementación con el Claude Agent SDK; decide() en hook PreToolUse y canUseTool
+│   ├── claude-runner.ts   Claude Agent SDK; decide() en hook PreToolUse y canUseTool; decisionContext()
+│   ├── codex-runner.ts    OpenAI Codex SDK; sandbox por modo, MCP por config, esquema estricto
+│   ├── opencode-runner.ts OpenCode; un servidor por ejecución, permisos respondidos con decide()
+│   └── strict-schema.ts   Esquema estricto (opcionales → null) para Codex
 └── tools/
     ├── git.ts             Worktrees, commits exactos, merges, reversiones
     └── shell.ts           Ejecución de comandos con timeout y salida acotada
@@ -35,7 +40,8 @@ skills/                    Skills de serie: _shared/RULES.md y <rol>/SKILL.md
 test/
 ├── helpers.ts             ScriptedRunner: un AgentRunner falso, determinista
 ├── runner-policy.ts       Reglas de permisos del runner real
-├── e2e.ts                 17 escenarios del flujo
+├── runtimes.ts            Puente MCP (cliente MCP real), Codex y OpenCode con SDK simulados, enrutamiento
+├── e2e.ts                 18 escenarios del flujo
 ├── loop.ts                Memoria, acceso MCP, adaptadores (HTTP simulado) y el bucle
 └── tutorial.ts            El tutorial de punta a punta
 ```
@@ -47,13 +53,14 @@ test/
 3. **Todo agente devuelve JSON con contrato.** Se valida dos veces: con JSON Schema en el SDK y con zod en el runner.
 4. **Confiar en git, no en lo que afirma el agente.** Los archivos del ledger, las reversiones y los commits se calculan con git.
 5. **Defensa en profundidad.** Permisos antes de cada herramienta y revisiones de git después de cada paso.
-6. **La IA es intercambiable.** El flujo solo conoce `AgentRunner`.
+6. **La IA es intercambiable.** El flujo solo conoce `AgentRunner`. `RouterRunner` envía cada paso al runtime que le toca (Claude, Codex u OpenCode); ver [16-runtimes.md](16-runtimes.md).
 
 ## La interfaz `AgentRunner`
 
 ```ts
 interface AgentRunner {
   run<S extends z.ZodType>(req: AgentRequest<S>): Promise<AgentResult<z.infer<S>>>;
+  close?(): Promise<void>;         // detiene servidores/procesos que el runner inició
 }
 
 interface AgentRequest<S> {
@@ -67,10 +74,13 @@ interface AgentRequest<S> {
   ask?: (q: string) => Promise<string>;  // exponer la herramienta ask
   scope?: AgentScope;              // root, writeRoot, lockedPaths, testPaths, allowedCommands
   readDirs?: string[];             // carpetas extra de solo lectura
-  model?: string;                  // resuelto: config > front-matter de la skill (o el del juez)
+  runtime?: "claude" | "codex" | "opencode";  // solo lo mira RouterRunner
+  model?: string;                  // resuelto por resolveRuntime (juez > runtime.steps > models/skill o runtime.<x>.model)
   effort?: Effort;
   claudeSkills?: string[];         // skills de Claude Code del paso ([] = ninguna)
   plugins?: string[];              // plugins locales (solo sus skills)
+  memory?: { search?, save? };     // herramientas de memoria del paso
+  mcpServers?: string[];           // servidores externos asignados (mcpAccess)
 }
 
 interface AgentResult<T> {
@@ -156,6 +166,10 @@ Ejemplo: un paso de seguridad después de la revisión.
 
 Es el siguiente paso natural (pasos 6 y 8 del video). El punto de enganche es el cierre de `implementTicket`, cuando el estado es `completed`: para cada elemento de `repos`, `git push -u origin <branch>` desde `worktree`, y crear el PR con la CLI de tu plataforma (`gh pr create`, `az repos pr create`) usando `test-plan.md` como descripción y enlazando los PR entre sí. Conviene hacerlo opcional con un campo nuevo en la config.
 
+### Otro runtime
+
+Implementa `AgentRunner` en `src/runner/`, agrega el nombre a `RuntimeNameSchema` (`src/config.ts`) y la fábrica a `createRunner` (`src/runtimes.ts`). Si el runtime deja aprobar cada herramienta, juzga con `decide(decisionContext(req, config), …)`; para `ask` y la memoria, registra las herramientas en `ToolBridge` y pasa la URL al runtime como servidor MCP HTTP. Implementa `close()` si arrancas procesos. Detalles en [16-runtimes.md](16-runtimes.md#agregar-otro-runtime).
+
 ### Otro origen de tickets (Jira, Linear…)
 
 Implementa `BacklogAdapter` (`src/backlog.ts`): `list()` devuelve elementos `{ ticket, ref }` y los omitidos con su motivo; `report()` publica un mensaje en el origen. Para construir el ticket, arma markdown con `# ID-123: título` y una sección de criterios, y pásalo a `parseTicket`. Agrega el tipo a `backlog` en `src/config.ts` y a `createBacklog`. Prueba el adaptador con un `fetch` simulado, como `test/loop.ts`.
@@ -164,7 +178,8 @@ Implementa `BacklogAdapter` (`src/backlog.ts`): `list()` devuelve elementos `{ t
 
 ```bash
 npm run typecheck     # tsc --noEmit sobre src/
-npm test              # runner-policy + e2e + tutorial
+npm test              # runner-policy + runtimes + e2e + loop + tutorial
+npm run test:runtimes # solo runtimes
 npm run test:e2e      # solo e2e
 npm run test:tutorial # solo el tutorial
 npm run build         # compila a dist/

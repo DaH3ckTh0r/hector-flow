@@ -12,7 +12,7 @@ import { z } from "zod";
 import type { FlowConfig } from "../config.js";
 import { isCommandAllowed, PathPolicy, ReadPolicy } from "../guards.js";
 import { toJsonSchema } from "../schemas.js";
-import { AgentError, type AgentMode, type AgentRequest, type AgentResult, type AgentRunner } from "./agent-runner.js";
+import { AgentError, type AgentMode, type AgentRequest, type AgentScope, type AgentResult, type AgentRunner } from "./agent-runner.js";
 
 const READ_TOOLS = new Set(["Read", "Glob", "Grep"]);
 const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
@@ -51,23 +51,8 @@ export class ClaudeAgentRunner implements AgentRunner {
   async run<S extends z.ZodType>(req: AgentRequest<S>): Promise<AgentResult<z.infer<S>>> {
     const started = Date.now();
     const denials: AgentResult<unknown>["denials"] = [];
-    const scope = req.scope ?? {
-      root: req.cwd,
-      writeRoot: req.cwd,
-      lockedPaths: this.config.lockedPaths,
-      allowedCommands: this.config.allowedCommands,
-    };
     const claudeSkills = req.claudeSkills ?? [];
-    const ctx: DecisionContext = {
-      mode: req.mode,
-      cwd: req.cwd,
-      write: new PathPolicy(scope.root, scope.lockedPaths, scope.writeRoot),
-      tests: new PathPolicy(scope.root, scope.testPaths ?? scope.lockedPaths),
-      read: new ReadPolicy([scope.root, ...(req.readDirs ?? [])], scope.readDeny ?? this.config.readDenyPaths),
-      allowedCommands: scope.allowedCommands,
-      skillsEnabled: claudeSkills.length > 0,
-      mcpServers: (req.mcpServers ?? []).filter((n) => n in this.config.mcpServers),
-    };
+    const ctx = decisionContext(req, this.config);
 
     const judge = (toolName: string, input: Record<string, unknown>): Verdict => {
       const verdict = decide(ctx, toolName, input);
@@ -193,6 +178,26 @@ export class ClaudeAgentRunner implements AgentRunner {
       denials,
     };
   }
+}
+
+/** Builds the policy context for one request; every runtime judges tool calls with it. */
+export function decisionContext(req: AgentRequest<z.ZodType>, config: FlowConfig): DecisionContext {
+  const scope = resolvedScope(req, config);
+  return {
+    mode: req.mode,
+    cwd: req.cwd,
+    write: new PathPolicy(scope.root, scope.lockedPaths, scope.writeRoot),
+    tests: new PathPolicy(scope.root, scope.testPaths ?? scope.lockedPaths),
+    read: new ReadPolicy([scope.root, ...(req.readDirs ?? [])], scope.readDeny ?? config.readDenyPaths),
+    allowedCommands: scope.allowedCommands,
+    skillsEnabled: (req.claudeSkills ?? []).length > 0,
+    mcpServers: (req.mcpServers ?? []).filter((n) => n in config.mcpServers),
+  };
+}
+
+/** The request's scope, or the whole cwd with the config's top-level lists. */
+export function resolvedScope(req: AgentRequest<z.ZodType>, config: FlowConfig): AgentScope {
+  return req.scope ?? { root: req.cwd, writeRoot: req.cwd, lockedPaths: config.lockedPaths, allowedCommands: config.allowedCommands };
 }
 
 /** The permission rules for one tool call. Pure, so it can be tested without a model. */

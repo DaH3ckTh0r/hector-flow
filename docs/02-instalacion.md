@@ -8,6 +8,8 @@
 | npm | el que trae Node | `npm --version` |
 | git | 2.30 o superior (usa `git worktree`) | `git --version` |
 | Acceso a Claude | Claude Code con sesión iniciada, o `ANTHROPIC_API_KEY` | `claude --version` y abrir `claude` una vez |
+| Codex (opcional) | Sesión de Codex (`npx codex login`) u `OPENAI_API_KEY`; el binario viene con el SDK | Solo si algún paso usa `runtime: codex` |
+| OpenCode (opcional) | `opencode` en el PATH (`npm i -g opencode-ai`) con un proveedor configurado | `opencode --version`; solo si algún paso usa `runtime: opencode` |
 | Sistema operativo | macOS o Linux. En Windows, usa WSL2 (no está probado en Windows nativo). | |
 
 Además, cada componente necesita sus propias herramientas (por ejemplo, el SDK de .NET para `dotnet test`). `check` lo verifica.
@@ -36,12 +38,13 @@ npm run typecheck   # compila sin errores
 npm test            # ~1 minuto, sin llamadas al modelo
 ```
 
-`npm test` ejecuta cuatro suites:
+`npm test` ejecuta cinco suites:
 
 1. `test/runner-policy.ts`: las reglas de permisos de los agentes.
-2. `test/e2e.ts`: 17 escenarios del flujo con un runner simulado.
-3. `test/loop.ts`: memoria, acceso MCP, adaptadores de backlog (con HTTP simulado) y el bucle.
-4. `test/tutorial.ts`: el tutorial completo, de punta a punta.
+2. `test/runtimes.ts`: el puente MCP (con un cliente MCP real) y los runtimes Codex y OpenCode con SDK simulados.
+3. `test/e2e.ts`: 18 escenarios del flujo con un runner simulado.
+4. `test/loop.ts`: memoria, acceso MCP, adaptadores de backlog (con HTTP simulado) y el bucle.
+5. `test/tutorial.ts`: el tutorial completo, de punta a punta.
 
 Debe terminar con `tutorial checks passed`.
 

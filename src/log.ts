@@ -2,7 +2,7 @@ import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export type FlowEvent =
-  | { type: "step.start"; step: string; attempt?: number }
+  | { type: "step.start"; step: string; attempt?: number; runtime?: string }
   | { type: "step.end"; step: string; ok: boolean; durationMs: number; costUsd?: number; attempt?: number }
   | { type: "shell"; step: string; command: string; ok: boolean; code: number | null; durationMs: number }
   | { type: "guard"; step: string; action: string; detail: string }
@@ -42,7 +42,7 @@ export class RunLog {
 function format(e: FlowEvent): string {
   switch (e.type) {
     case "step.start":
-      return `▶ ${e.step}${e.attempt ? ` (attempt ${e.attempt})` : ""}`;
+      return `▶ ${e.step}${e.attempt ? ` (attempt ${e.attempt})` : ""}${e.runtime ? ` [${e.runtime}]` : ""}`;
     case "step.end":
       return `${e.ok ? "✔" : "✖"} ${e.step} ${(e.durationMs / 1000).toFixed(1)}s${e.costUsd ? ` $${e.costUsd.toFixed(4)}` : ""}`;
     case "shell":

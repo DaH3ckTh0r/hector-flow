@@ -18,6 +18,15 @@ export type Role = z.infer<typeof RoleSchema>;
 export const EffortSchema = z.enum(["low", "medium", "high", "xhigh", "max"]);
 export type Effort = z.infer<typeof EffortSchema>;
 
+export const RuntimeNameSchema = z.enum(["claude", "codex", "opencode"]);
+export type RuntimeName = z.infer<typeof RuntimeNameSchema>;
+
+/** A step's runtime: just a name, or a name with the model and effort to use there. */
+const StepRuntimeSchema = z.union([
+  RuntimeNameSchema,
+  z.object({ use: RuntimeNameSchema, model: z.string().optional(), effort: EffortSchema.optional() }),
+]);
+
 /** Secret-looking files no agent may read. Override with `readDenyPaths` (set [] to disable). */
 export const DEFAULT_READ_DENY = [
   "**/.env",
@@ -102,6 +111,37 @@ export const ConfigSchema = z.object({
   claudeSkills: z.partialRecord(RoleSchema, z.array(z.string())).default({}),
   /** Local Claude Code plugin folders (skills, agents, hooks) loaded into every agent. Relative to the primary repo. */
   pluginDirs: z.array(z.string()).default([]),
+  /**
+   * Which agent runtime runs each step: Claude (Agent SDK), Codex (OpenAI
+   * Codex SDK) or OpenCode. models/efforts and skill front-matter models are
+   * Claude models; for other runtimes set the model here.
+   */
+  runtime: z
+    .object({
+      default: RuntimeNameSchema.default("claude"),
+      steps: z.partialRecord(RoleSchema, StepRuntimeSchema).default({}),
+      codex: z
+        .object({
+          /** Default model for Codex steps (e.g. "gpt-5.5-codex"). Omit for Codex's default. */
+          model: z.string().optional(),
+          effort: EffortSchema.optional(),
+          /** Let sandboxed commands use the network. Off by default. */
+          networkAccess: z.boolean().default(false),
+          /** Path to a codex binary instead of the one bundled with the SDK. */
+          path: z.string().optional(),
+        })
+        .prefault({}),
+      opencode: z
+        .object({
+          /** Default model for OpenCode steps, as "provider/model" (e.g. "anthropic/claude-sonnet-4-5"). */
+          model: z.string().regex(/^[^/]+\/.+$/, 'use "provider/model"').optional(),
+          hostname: z.string().default("127.0.0.1"),
+          /** Port for `opencode serve`. 0 lets the system choose (allows several runs at once). */
+          port: z.number().int().min(0).default(0),
+        })
+        .prefault({}),
+    })
+    .prefault({}),
   /** Persistent memory shared by every run on this repo (built-in MCP tools memory_search / memory_save). */
   memory: z
     .object({
@@ -199,6 +239,8 @@ export const ConfigSchema = z.object({
         .array(
           z.object({
             name: z.string().regex(/^[a-z][a-z0-9-]*$/, "judge names: lowercase, digits, dashes"),
+            /** Runtime for this judge (default: the review step's). Its model is a model of that runtime. */
+            runtime: RuntimeNameSchema.optional(),
             model: z.string().optional(),
             effort: EffortSchema.optional(),
             /** Extra instructions for this judge, e.g. "Focus on security and data exposure." */

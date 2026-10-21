@@ -711,6 +711,46 @@ async function dualReviewBlockerStays() {
   console.log("✓ dual review: duplicate findings merge with the highest severity; a remaining blocker means needs_human");
 }
 
+async function runtimeRouting() {
+  const { repo, ticket, parent } = makeRepo();
+  const config = ConfigSchema.parse({
+    testCommand: "node --test",
+    lockedPaths: ["test/**"],
+    allowedCommands: ["node --test"],
+    workspacesDir: "ws",
+    models: { coder: "sonnet", plan: "opus" },
+    efforts: { coder: "high" },
+    runtime: {
+      steps: { coder: { use: "codex", model: "gpt-5.5-codex" }, enrich: "opencode" },
+      codex: { effort: "medium" },
+      opencode: { model: "openrouter/qwen3-coder" },
+    },
+    review: { judges: [{ name: "claude", model: "opus" }, { name: "codex", runtime: "codex", model: "gpt-5.5", effort: "xhigh" }] },
+  });
+  const runner = new ScriptedRunner(
+    {
+      enrich: [enrich],
+      plan: [plan],
+      testAuthor: [writeTests],
+      "coder:T1": [coderWrites(GOOD)],
+      "review:opus": [() => ({ approved: true, issues: [] })],
+      "review:gpt-5.5": [() => ({ approved: true, issues: [] })],
+      qaPlan: [qaPlan],
+    },
+    byJudge as never,
+  );
+  const s = await implementTicket({ repo, ticket: await readTicket(ticket("RT-1")), config, runner });
+  assert.equal(s.status, "completed", s.reason);
+  const of = (role: string) => runner.calls.filter((c) => c.role === role).map((c) => [c.runtime, c.model, c.effort]);
+  assert.deepEqual(of("enrich"), [["opencode", "openrouter/qwen3-coder", undefined]], "OpenCode: runtime model, no Claude effort");
+  assert.deepEqual(of("plan"), [["claude", "opus", undefined]], "unrouted steps stay on Claude with Claude models");
+  assert.deepEqual(of("coder"), [["codex", "gpt-5.5-codex", "medium"]], "Codex: step model wins over models.coder; codex effort over efforts.coder");
+  assert.deepEqual(of("review").sort(), [["claude", "opus", undefined], ["codex", "gpt-5.5", "xhigh"]], "each judge on its own runtime");
+  const events = readFileSync(join(s.runDir, "events.jsonl"), "utf8");
+  assert.match(events, /"step":"implement-T1"[^\n]*"runtime":"codex"/, "the run log says which runtime ran a step");
+  console.log("✓ runtimes: steps and judges routed to Claude, Codex or OpenCode with the right model and effort");
+}
+
 function mergeReviewsUnit() {
   const r = mergeReviews([
     { judge: "a", review: { approved: true, issues: [{ severity: "minor", component: "api", file: "x.ts", description: "Name it better" }] } },
@@ -731,6 +771,7 @@ mergeReviewsUnit();
 await skillsOverridesAndPrecedence();
 await dualReview();
 await dualReviewBlockerStays();
+await runtimeRouting();
 await cleanAfterFailure();
 await sameWorkerThenFresh();
 await reviewAndQaRouting();

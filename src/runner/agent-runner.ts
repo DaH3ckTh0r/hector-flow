@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import type { Effort, Role } from "../config.js";
+import type { Effort, Role, RuntimeName } from "../config.js";
 
 /**
  * What an agent is allowed to do to the worktree.
@@ -48,6 +48,8 @@ export interface AgentRequest<S extends z.ZodType> {
   };
   /** Names of external MCP servers (config.mcpServers) this step may use. */
   mcpServers?: string[];
+  /** Which runtime runs this step (config.runtime). Only a RouterRunner looks at it. */
+  runtime?: RuntimeName;
 }
 
 export interface MemorySaveInput {
@@ -88,6 +90,8 @@ export interface AgentResult<T> {
  */
 export interface AgentRunner {
   run<S extends z.ZodType>(req: AgentRequest<S>): Promise<AgentResult<z.infer<S>>>;
+  /** Releases servers and processes the runner started (OpenCode server, tool bridge). */
+  close?(): Promise<void>;
 }
 
 export class AgentError extends Error {
