@@ -1,4 +1,4 @@
-# 16. Runtimes: Claude, Codex y OpenCode
+# 16. Runtimes: Claude, Codex, OpenCode y GitHub Copilot
 
 Cada paso del flujo lo ejecuta un **runtime**, el programa que recibe el prompt, usa herramientas en el worktree y devuelve el JSON del paso. Por defecto es Claude (Claude Agent SDK), pero cualquier paso, y cada juez de revisión, puede ejecutarse en:
 
@@ -7,12 +7,13 @@ Cada paso del flujo lo ejecuta un **runtime**, el programa que recibe el prompt,
 | `claude` | Claude Code como librería (Claude Agent SDK). Es el valor por defecto. | `@anthropic-ai/claude-agent-sdk` |
 | `codex` | OpenAI Codex (`codex exec`), con su sandbox del sistema operativo. | `@openai/codex-sdk` (trae el binario `codex`) |
 | `opencode` | OpenCode (`opencode serve`), con cualquier proveedor que soporte: Anthropic, OpenAI, OpenRouter, modelos locales… | `@opencode-ai/sdk` + el binario `opencode` en el PATH |
+| `copilot` | GitHub Copilot (el runtime de Copilot CLI, controlado por JSON-RPC), con los modelos de tu suscripción de Copilot: GPT, Claude, Gemini… | `@github/copilot-sdk` (trae el runtime) |
 
 El flujo no cambia: el código sigue decidiendo el orden de los pasos, los commits, las verificaciones y los reintentos. Solo cambia quién razona dentro de un paso. Sirve para:
 
 - **Revisión cruzada**: un juez en Claude y otro en Codex. Un modelo distinto no comparte los mismos puntos ciegos.
 - **Costo**: pasos mecánicos (`qaPlan`, `enrich`) en un modelo barato vía OpenCode.
-- **Preferencia o disponibilidad**: equipos que ya pagan Codex, o que usan modelos locales.
+- **Preferencia o disponibilidad**: equipos que ya pagan Codex o Copilot, o que usan modelos locales. Con Copilot, una sola suscripción da acceso a modelos de varios proveedores.
 
 ## Configuración
 
@@ -21,10 +22,12 @@ El flujo no cambia: el código sigue decidiendo el orden de los pasos, los commi
   "default": "claude",
   "steps": {
     "coder": { "use": "codex", "model": "gpt-5.5-codex", "effort": "high" },
-    "qaPlan": "opencode"
+    "qaPlan": "opencode",
+    "enrich": { "use": "copilot", "model": "<id de un modelo de Copilot>" }
   },
   "codex": { "model": "gpt-5.5-codex", "effort": "medium", "networkAccess": false },
-  "opencode": { "model": "openrouter/qwen/qwen3-coder", "hostname": "127.0.0.1", "port": 0 }
+  "opencode": { "model": "openrouter/qwen/qwen3-coder", "hostname": "127.0.0.1", "port": 0 },
+  "copilot": { "model": "<id de un modelo de Copilot>", "effort": "high", "timeoutMinutes": 30 }
 },
 "review": {
   "judges": [
@@ -37,7 +40,7 @@ El flujo no cambia: el código sigue decidiendo el orden de los pasos, los commi
 | Campo | Por defecto | Descripción |
 |---|---|---|
 | `runtime.default` | `"claude"` | Runtime de los pasos que no aparecen en `steps`. |
-| `runtime.steps.<rol>` | — | `"codex"`, `"opencode"` o `"claude"`, o un objeto `{ "use", "model"?, "effort"? }`. Roles: `enrich`, `plan`, `testAuthor`, `coder`, `diagnose`, `review`, `qaPlan`, `distill`, `lead`. |
+| `runtime.steps.<rol>` | — | `"claude"`, `"codex"`, `"opencode"` o `"copilot"`, o un objeto `{ "use", "model"?, "effort"? }`. Roles: `enrich`, `plan`, `testAuthor`, `coder`, `diagnose`, `review`, `qaPlan`, `distill`, `lead`. |
 | `runtime.codex.model` | default de Codex | Modelo de los pasos en Codex. |
 | `runtime.codex.effort` | — | `low` … `max`; se pasa como `model_reasoning_effort`. |
 | `runtime.codex.networkAccess` | `false` | Permite red a los comandos dentro del sandbox. |
@@ -45,6 +48,11 @@ El flujo no cambia: el código sigue decidiendo el orden de los pasos, los commi
 | `runtime.opencode.model` | default de OpenCode | Siempre `"proveedor/modelo"` (`anthropic/claude-sonnet-4-5`, `openai/gpt-5.5`, `ollama/qwen3`…). |
 | `runtime.opencode.hostname` | `127.0.0.1` | Donde escucha `opencode serve`. |
 | `runtime.opencode.port` | `0` | `0` deja que el sistema elija un puerto libre, y permite varias ejecuciones a la vez. |
+| `runtime.copilot.model` | default de Copilot | Un id de modelo de Copilot, no los alias `opus`/`sonnet` de Claude Code. `hector-flow models --repo <repo> copilot` lista los ids que tu cuenta puede usar. |
+| `runtime.copilot.effort` | — | `low` … `max`; solo en modelos que lo admiten. |
+| `runtime.copilot.tokenEnv` | — | Variable con un token de GitHub. Sin ella, Copilot usa su orden normal: `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, la sesión de `copilot login` y `gh auth token`. |
+| `runtime.copilot.timeoutMinutes` | `30` | Tiempo máximo de un paso. |
+| `runtime.copilot.path` | runtime incluido | Otra instalación de Copilot CLI (`COPILOT_CLI_PATH`). |
 | `review.judges[].runtime` | el del paso `review` | Runtime de ese juez. Su `model` es un modelo de ese runtime. |
 
 ### Qué modelo y qué esfuerzo se usan
@@ -56,6 +64,7 @@ El flujo no cambia: el código sigue decidiendo el orden de los pasos, los commi
 | `claude` | juez → objeto en `runtime.steps` → `models.<rol>` → front-matter del skill | juez → objeto en `steps` → `efforts.<rol>` → front-matter |
 | `codex` | juez → objeto en `runtime.steps` → `runtime.codex.model` | juez → objeto en `steps` → `runtime.codex.effort` → `efforts.<rol>` / front-matter |
 | `opencode` | juez → objeto en `runtime.steps` → `runtime.opencode.model` | juez → objeto en `steps` (se envía como *variant* de OpenCode) |
+| `copilot` | juez → objeto en `runtime.steps` → `runtime.copilot.model` | juez → objeto en `steps` → `runtime.copilot.effort` → `efforts.<rol>` / front-matter |
 
 En OpenCode el esfuerzo es la *variant* del modelo, y los nombres válidos dependen del modelo (`high`, `max`…). Por eso solo se envía cuando lo pones explícitamente para ese runtime.
 
@@ -65,28 +74,28 @@ El `model` de un objeto en `steps` solo vale para el runtime que nombra: `{ "use
 
 - El **mismo skill** (`SKILL.md` + `RULES.md` + pautas) es la instrucción del paso.
 - La **misma salida estructurada**: un JSON Schema generado del contrato zod, validado después con zod. Si no cumple, el paso falla igual que con Claude.
-- Las herramientas del flujo, **`ask`, `memory_search` y `memory_save`**, llegan a Codex y OpenCode por un **puente MCP local** (ver abajo).
+- Las herramientas del flujo, **`ask`, `memory_search` y `memory_save`**, llegan a Codex y OpenCode por un **puente MCP local** (ver abajo), y a Copilot como herramientas propias de la sesión, dentro del mismo proceso.
 - Los **servidores MCP externos** que `mcpAccess` asigna al paso.
-- **Retomar la sesión**: los defectos vuelven al mismo worker, que conserva su contexto (hilo de Codex, sesión de OpenCode).
+- **Retomar la sesión**: los defectos vuelven al mismo worker, que conserva su contexto (hilo de Codex, sesión de OpenCode o de Copilot).
 - Las **verificaciones de git** después de cada paso: archivos de test bloqueados revertidos, archivos fuera del componente revertidos, archivos no declarados revertidos o señalados.
 - El registro: `events.jsonl` marca con `"runtime"` los pasos que no corren en Claude, y la consola muestra `▶ implement-T1 [codex]`.
 
 ## Aislamiento: qué protege cada runtime
 
-Esta es la diferencia importante. Claude y OpenCode piden permiso **antes** de cada herramienta, y el flujo responde con las mismas reglas (`decide()`, ver [06-seguridad.md](06-seguridad.md)). Codex no ofrece ese gancho: el aislamiento lo da su sandbox del sistema operativo.
+Esta es la diferencia importante. Claude, OpenCode y Copilot piden permiso **antes** de cada herramienta, y el flujo responde con las mismas reglas (`decide()`, ver [06-seguridad.md](06-seguridad.md)). Codex no ofrece ese gancho: el aislamiento lo da su sandbox del sistema operativo.
 
-| Protección | Claude | OpenCode | Codex |
-|---|---|---|---|
-| Modo solo lectura | ✔ regla | ✔ regla | ✔ sandbox `read-only` |
-| Escribir solo en el componente | ✔ regla | ✔ regla | ✔ sandbox `workspace-write` en la carpeta del componente |
-| El test author solo escribe tests | ✔ regla | ✔ regla | ✔ revertido por el flujo después del paso (el sandbox abarca el worktree) |
-| Tests bloqueados intactos | ✔ regla + git | ✔ regla + git | ✔ git (revertidos después del paso) |
-| Lista de secretos (`readDenyPaths`) | ✔ | ✔ | ✘ **no se aplica** |
-| Raíces legibles | ✔ | ✔ | ✘ puede leer cualquier archivo que su usuario pueda leer |
-| Lista de comandos (`allowedCommands`) | ✔ | ✔ | ✘ **no se aplica** (se le indica en el prompt) |
-| Red | Herramientas web denegadas | `webfetch`/`websearch` rechazados | ✔ sin red en el sandbox, búsqueda web desactivada |
-| Subagentes | Denegados | `task` rechazado | No disponible en `codex exec` |
-| Costo en USD | ✔ | ✔ (lo informa OpenCode) | ✘ solo tokens (`costUsd` = 0) |
+| Protección | Claude | OpenCode | Copilot | Codex |
+|---|---|---|---|---|
+| Modo solo lectura | ✔ regla | ✔ regla | ✔ regla | ✔ sandbox `read-only` |
+| Escribir solo en el componente | ✔ regla | ✔ regla | ✔ regla | ✔ sandbox `workspace-write` en la carpeta del componente |
+| El test author solo escribe tests | ✔ regla | ✔ regla | ✔ regla | ✔ revertido por el flujo después del paso (el sandbox abarca el worktree) |
+| Tests bloqueados intactos | ✔ regla + git | ✔ regla + git | ✔ regla + git | ✔ git (revertidos después del paso) |
+| Lista de secretos (`readDenyPaths`) | ✔ | ✔ | ✔ (gancho antes de cada lectura) | ✘ **no se aplica** |
+| Raíces legibles | ✔ | ✔ | ✔ | ✘ puede leer cualquier archivo que su usuario pueda leer |
+| Lista de comandos (`allowedCommands`) | ✔ | ✔ | ✔ | ✘ **no se aplica** (se le indica en el prompt) |
+| Red | Herramientas web denegadas | `webfetch`/`websearch` rechazados | `web_fetch`/`web_search` quitados; permisos `url` rechazados | ✔ sin red en el sandbox, búsqueda web desactivada |
+| Subagentes | Denegados | `task` rechazado | `task` y agentes quitados | No disponible en `codex exec` |
+| Costo en USD | ✔ | ✔ (lo informa OpenCode) | ✘ Copilot cobra *premium requests* (`costUsd` = 0) | ✘ solo tokens (`costUsd` = 0) |
 
 **Consecuencia práctica:** si un paso corre en Codex, no dejes secretos dentro de los repos ni en carpetas que el usuario del proceso pueda leer, y considera que puede ejecutar cualquier comando dentro de su carpeta (sin red). `check` lo advierte.
 
@@ -110,6 +119,25 @@ Esta es la diferencia importante. Claude y OpenCode piden permiso **antes** de c
 
 4. La respuesta es `once` o `reject` con el motivo, que el agente lee y el flujo registra como `guard` en `events.jsonl`.
 
+### Cómo se responde a Copilot
+
+1. El flujo inicia **un** runtime de Copilot por ejecución, comprueba que hay sesión iniciada (si no, el paso falla de inmediato en vez de esperar el tiempo máximo) y abre una sesión por paso.
+2. La sesión se crea sin las herramientas `web_fetch`, `web_search`, `task` (y demás de subagentes), `ask_user`, `exit_plan_mode` ni `skill`.
+3. Cada solicitud de permiso se juzga con `decide()`:
+
+| Solicitud de Copilot | Se juzga como |
+|---|---|
+| `read` (fuera de la carpeta de trabajo) | `Read` del archivo |
+| `write` | `Write` de cada archivo afectado, incluidos todos los de un parche de varios archivos |
+| `shell` | `Bash` del comando completo |
+| `mcp` | permitido solo para los servidores que `mcpAccess` asigna al paso |
+| `custom-tool` | permitido solo para `ask` y `memory_*` de ese paso |
+| `url`, `memory` (la memoria propia de Copilot), `hook` y cualquier otro tipo | rechazado |
+| cualquiera con `managedApprovalRequired` (política de tu organización) | rechazado: exige una persona y nadie está mirando |
+
+4. Las lecturas dentro de la carpeta de trabajo **no piden permiso** en Copilot. Por eso un gancho `onPreToolUse` revisa `view`, `grep`, `glob` y similares antes de ejecutarlos: rechaza secretos y carpetas no legibles.
+5. `ask`, `memory_search` y `memory_save` se registran como herramientas de la sesión, que corren dentro del proceso del flujo, sin puente.
+
 ## El puente MCP
 
 Claude ejecuta `ask` y `memory_*` dentro del mismo proceso. Codex y OpenCode son procesos aparte, así que el flujo levanta un pequeño servidor MCP HTTP en `127.0.0.1` (puerto aleatorio):
@@ -130,7 +158,16 @@ npx codex login            # o exporta OPENAI_API_KEY
 # OpenCode: instala el binario y configura tus proveedores
 npm i -g opencode-ai
 opencode auth login
+
+# GitHub Copilot: el SDK ya trae el runtime. Inicia sesión con la CLI…
+npm i -g @github/copilot
+copilot login
+# …o usa un token: un fine-grained PAT con el permiso "Copilot Requests"
+# (los PAT clásicos ghp_ no sirven), en COPILOT_GITHUB_TOKEN o en runtime.copilot.tokenEnv.
+# Si ya usas la CLI de GitHub, `gh auth token` también vale.
 ```
+
+Necesitas una suscripción de Copilot con acceso a Copilot CLI. Si tu organización lo gestiona, la política debe permitir Copilot CLI y los modelos que elijas.
 
 Después:
 
@@ -145,16 +182,22 @@ npm run flow -- check --repo <repo>
 ✓ codex: using the CLI bundled with @openai/codex-sdk
 ! codex steps: the read deny-list and the command allowlist are not enforced
 ✗ opencode is installed (on PATH)
+✓ copilot: using COPILOT_GITHUB_TOKEN, GH_TOKEN, GITHUB_TOKEN, your `copilot login` session or `gh auth token`
+✗ copilot is signed in
+    Not authenticated. Run `copilot login` or set runtime.copilot.tokenEnv.
 ```
+
+Para comprobar la sesión de Copilot, `check` inicia el runtime unos instantes y le pregunta si hay sesión iniciada. No llama a ningún modelo.
 
 ## Diferencias de comportamiento que conviene conocer
 
 - **Prompt de sistema.** Codex no tiene opción de prompt de sistema. El flujo antepone el skill y añade una sección "Limits of this step" con la carpeta escribible, los tests bloqueados y los comandos permitidos.
-- **Esquema estricto en Codex.** Las salidas estructuradas de OpenAI exigen que todos los campos sean obligatorios. El flujo convierte los opcionales en "puede ser `null`" y elimina los `null` antes de validar con zod.
+- **Prompt de sistema en Copilot.** El skill se añade al prompt de sistema de Copilot, que conserva sus propias instrucciones de herramientas y seguridad.
+- **Esquema estricto en Codex y Copilot.** Las salidas estructuradas de OpenAI (y las de Copilot, en modo estricto) exigen que todos los campos sean obligatorios. El flujo convierte los opcionales en "puede ser `null`" y elimina los `null` antes de validar con zod.
 - **Skills y plugins de Claude Code** (`claudeSkills`, `pluginDirs`) solo existen en Claude. En otros runtimes se ignoran.
-- **`loadProjectSettings`, `maxTurnsPerAgent`, `maxBudgetUsdPerAgent`** solo aplican a Claude. Codex y OpenCode usan sus propios límites.
-- **Archivos de proyecto.** Codex lee `AGENTS.md` y OpenCode lee su `opencode.json` y `AGENTS.md` del repo, igual que Claude lee `CLAUDE.md`. Tenlo en cuenta si contienen instrucciones que contradicen el flujo.
-- **Sesiones retomadas.** Los hilos de Codex persisten en `~/.codex/sessions`. Las sesiones de OpenCode viven en el servidor de esa ejecución, suficiente para enviar defectos al mismo worker.
+- **`loadProjectSettings`, `maxTurnsPerAgent`, `maxBudgetUsdPerAgent`** solo aplican a Claude. Codex, OpenCode y Copilot usan sus propios límites (en Copilot, además, `runtime.copilot.timeoutMinutes`).
+- **Archivos de proyecto.** Codex lee `AGENTS.md` OpenCode lee su `opencode.json` y `AGENTS.md`, y Copilot lee `.github/copilot-instructions.md`, `AGENTS.md` y sus archivos de instrucciones del repo, igual que Claude lee `CLAUDE.md`. Tenlo en cuenta si contienen instrucciones que contradicen el flujo.
+- **Sesiones retomadas.** Los hilos de Codex persisten en `~/.codex/sessions`. Las sesiones de Copilot persisten en `~/.copilot`. Las de OpenCode viven en el servidor de esa ejecución, suficiente para enviar defectos al mismo worker.
 
 ## Recetas
 
@@ -168,6 +211,29 @@ Ejemplo completo: `examples/runtimes.config.json`.
   { "name": "codex", "runtime": "codex", "model": "gpt-5.5" }
 ] }
 ```
+
+**Revisión con tres familias de modelos, todo con Copilot:**
+
+```bash
+npm run flow -- models --repo <repo> copilot
+```
+
+```
+id                 premium×  efforts            name
+<id-gpt>           1         low,medium,high    GPT …
+<id-claude>        1         -                  Claude Sonnet …
+<id-gemini>        0.33      -                  Gemini …
+```
+
+```json
+"review": { "judges": [
+  { "name": "gpt",    "runtime": "copilot", "model": "<id-gpt>" },
+  { "name": "claude", "runtime": "copilot", "model": "<id-claude>" },
+  { "name": "gemini", "runtime": "copilot", "model": "<id-gemini>" }
+] }
+```
+
+Los modelos disponibles cambian con el tiempo y dependen de tu plan y de la política de tu organización; `models` muestra los de tu cuenta (los deshabilitados por política aparecen marcados). La columna `premium×` es el multiplicador de *premium requests* de cada modelo.
 
 **Todo en OpenCode con un modelo local, salvo la revisión:**
 
@@ -189,4 +255,4 @@ Ejemplo completo: `examples/runtimes.config.json`.
 
 ## Agregar otro runtime
 
-Implementa `AgentRunner` ([11-arquitectura.md](11-arquitectura.md#agentrunner)) en `src/runner/`, agrega su nombre a `RuntimeNameSchema` en `config.ts` y su fábrica en `createRunner()` (`src/runtimes.ts`). Reutiliza `decisionContext()` + `decide()` si el runtime permite aprobar cada herramienta, y `ToolBridge` para exponer `ask` y la memoria. Las pruebas de `test/runtimes.ts` muestran cómo probarlo con un SDK simulado.
+Implementa `AgentRunner` ([11-arquitectura.md](11-arquitectura.md#agentrunner)) en `src/runner/`, agrega su nombre a `RuntimeNameSchema` en `config.ts` y su fábrica en `createRunner()` (`src/runtimes.ts`). Reutiliza `decisionContext()` + `decide()` si el runtime permite aprobar cada herramienta (como hacen `opencode-runner.ts` y `copilot-runner.ts`), y `ToolBridge` para exponer `ask` y la memoria por MCP, o `ToolBridge.definitions()` + `call()` si el runtime acepta herramientas dentro del proceso. Las pruebas de `test/runtimes.ts` muestran cómo probarlo con un SDK simulado.

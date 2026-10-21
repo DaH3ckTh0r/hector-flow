@@ -3,6 +3,7 @@ import type { Effort, FlowConfig, Role, RuntimeName } from "./config.js";
 import type { AgentRequest, AgentResult, AgentRunner } from "./runner/agent-runner.js";
 import { ClaudeAgentRunner } from "./runner/claude-runner.js";
 import { CodexAgentRunner } from "./runner/codex-runner.js";
+import { CopilotAgentRunner } from "./runner/copilot-runner.js";
 import { OpenCodeAgentRunner } from "./runner/opencode-runner.js";
 import type { ResolvedStep } from "./skills.js";
 
@@ -19,9 +20,9 @@ type Judge = FlowConfig["review"]["judges"][number];
  *
  * runtime: judge.runtime > runtime.steps[role] > runtime.default.
  * Claude: model/effort from judge > runtime.steps object > models/efforts > skill front-matter.
- * Codex/OpenCode: models/efforts and skill front-matter name Claude models, so they are
+ * Codex/OpenCode/Copilot: models/efforts and skill front-matter name Claude models, so they are
  * ignored for the model; it comes from judge > runtime.steps object > runtime.<name>.model.
- * Codex also accepts the generic effort levels as a last fallback; OpenCode
+ * Codex and Copilot also accept the generic effort levels as a last fallback; OpenCode
  * effort (its "variant") is only taken from explicit runtime settings.
  */
 export function resolveRuntime(config: FlowConfig, role: Role, step: Pick<ResolvedStep, "model" | "effort">, judge?: Judge): RuntimeChoice {
@@ -39,7 +40,7 @@ export function resolveRuntime(config: FlowConfig, role: Role, step: Pick<Resolv
   const effort =
     judge?.effort ??
     fromStep?.effort ??
-    (runtime === "codex" ? (config.runtime.codex.effort ?? step.effort) : undefined);
+    (runtime === "codex" || runtime === "copilot" ? (config.runtime[runtime].effort ?? step.effort) : undefined);
   return { runtime, model, effort };
 }
 
@@ -86,12 +87,13 @@ export class RouterRunner implements AgentRunner {
   }
 }
 
-/** The production runner: Claude, Codex and OpenCode behind one router. */
+/** The production runner: Claude, Codex, OpenCode and Copilot behind one router. */
 export function createRunner(config: FlowConfig, factories: RunnerFactories = {}): RouterRunner {
   return new RouterRunner(config.runtime.default, {
     claude: () => new ClaudeAgentRunner(config),
     codex: () => new CodexAgentRunner(config),
     opencode: () => new OpenCodeAgentRunner(config),
+    copilot: () => new CopilotAgentRunner(config),
     ...factories,
   });
 }

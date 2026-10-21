@@ -166,6 +166,7 @@ export async function preflight(opts: {
 export async function checkRuntimes(
   config: FlowConfig,
   which: (bin: string) => Promise<boolean> = onPath,
+  copilotAuth: (config: FlowConfig) => Promise<{ ok: boolean; message: string }> = copilotSignedIn,
 ): Promise<CheckLine[]> {
   const lines: CheckLine[] = [];
   const used = runtimesInUse(config);
@@ -189,6 +190,19 @@ export async function checkRuntimes(
     const sse = Object.entries(config.mcpServers).filter(([, s]) => "type" in s && s.type === "sse").map(([n]) => n);
     if (sse.length) lines.push({ ok: true, warn: true, label: `codex cannot use SSE MCP servers: ${sse.join(", ")}` });
   }
+  if (used.has("copilot")) {
+    const env = config.runtime.copilot.tokenEnv;
+    lines.push(
+      env
+        ? { ok: !!process.env[env], label: `copilot: token variable ${env} is set`, detail: process.env[env] ? undefined : `Export ${env}, or remove tokenEnv to use your \`copilot login\` session.` }
+        : { ok: true, label: "copilot: using COPILOT_GITHUB_TOKEN, GH_TOKEN, GITHUB_TOKEN, your `copilot login` session or `gh auth token`" },
+    );
+    const auth = await copilotAuth(config);
+    lines.push({ ok: auth.ok, label: "copilot is signed in", detail: auth.ok ? undefined : auth.message });
+    if (config.runtime.copilot.path) {
+      lines.push({ ok: existsSync(config.runtime.copilot.path), label: `copilot CLI ${config.runtime.copilot.path} exists` });
+    }
+  }
   if (used.has("opencode")) {
     const found = await which("opencode");
     lines.push({
@@ -199,6 +213,57 @@ export async function checkRuntimes(
     if (!config.runtime.opencode.model) lines.push({ ok: true, warn: true, label: "runtime.opencode.model is not set: OpenCode will use its own default model" });
   }
   return lines;
+}
+
+/** Copilot model ids this account can use (no model call), for runtime.copilot.model and judges. */
+export async function listCopilotModels(
+  config: FlowConfig,
+): Promise<Array<{ id: string; name: string; enabled: boolean; efforts: string[]; multiplier?: number }>> {
+  const s = config.runtime.copilot;
+  const token = s.tokenEnv ? process.env[s.tokenEnv] : undefined;
+  const { CopilotClient } = await import("@github/copilot-sdk");
+  const client = new CopilotClient({
+    logLevel: "none",
+    ...(token ? { gitHubToken: token } : {}),
+    ...(s.path ? { env: { ...process.env, COPILOT_CLI_PATH: s.path } } : {}),
+  });
+  try {
+    await client.start();
+    const auth = await client.getAuthStatus();
+    if (!auth.isAuthenticated) throw new Error(`Copilot is not signed in (${auth.statusMessage ?? "no status"}). Run \`copilot login\`.`);
+    return (await client.listModels()).map((m) => ({
+      id: m.id,
+      name: m.name,
+      enabled: m.policy?.state !== "disabled",
+      efforts: m.supportedReasoningEfforts ?? [],
+      multiplier: m.billing?.multiplier,
+    }));
+  } finally {
+    await client.stop();
+  }
+}
+
+/** Starts the Copilot runtime briefly (no model call) and asks whether it is signed in. */
+async function copilotSignedIn(config: FlowConfig): Promise<{ ok: boolean; message: string }> {
+  const s = config.runtime.copilot;
+  const token = s.tokenEnv ? process.env[s.tokenEnv] : undefined;
+  try {
+    const { CopilotClient } = await import("@github/copilot-sdk");
+    const client = new CopilotClient({
+      logLevel: "none",
+      ...(token ? { gitHubToken: token } : {}),
+      ...(s.path ? { env: { ...process.env, COPILOT_CLI_PATH: s.path } } : {}),
+    });
+    try {
+      await client.start();
+      const status = await client.getAuthStatus();
+      return { ok: status.isAuthenticated, message: `${status.statusMessage ?? "Not authenticated"}. Run \`copilot login\` or set runtime.copilot.tokenEnv.` };
+    } finally {
+      await client.stop();
+    }
+  } catch (err) {
+    return { ok: false, message: `Could not start the Copilot runtime: ${(err as Error).message}` };
+  }
 }
 
 async function onPath(bin: string): Promise<boolean> {

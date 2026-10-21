@@ -18,7 +18,7 @@ export type Role = z.infer<typeof RoleSchema>;
 export const EffortSchema = z.enum(["low", "medium", "high", "xhigh", "max"]);
 export type Effort = z.infer<typeof EffortSchema>;
 
-export const RuntimeNameSchema = z.enum(["claude", "codex", "opencode"]);
+export const RuntimeNameSchema = z.enum(["claude", "codex", "opencode", "copilot"]);
 export type RuntimeName = z.infer<typeof RuntimeNameSchema>;
 
 /** A step's runtime: just a name, or a name with the model and effort to use there. */
@@ -138,6 +138,19 @@ export const ConfigSchema = z.object({
           hostname: z.string().default("127.0.0.1"),
           /** Port for `opencode serve`. 0 lets the system choose (allows several runs at once). */
           port: z.number().int().min(0).default(0),
+        })
+        .prefault({}),
+      copilot: z
+        .object({
+          /** Default model for Copilot steps, as Copilot names it (e.g. "gpt-5.5", "claude-sonnet-4.5"). */
+          model: z.string().optional(),
+          effort: EffortSchema.optional(),
+          /** Environment variable holding a GitHub token. Omit to use your `copilot login` session. */
+          tokenEnv: z.string().optional(),
+          /** Longest a single step may run before it is abandoned. */
+          timeoutMinutes: z.number().positive().default(30),
+          /** Path to a Copilot CLI instead of the runtime bundled with the SDK. */
+          path: z.string().optional(),
         })
         .prefault({}),
     })

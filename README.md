@@ -12,10 +12,10 @@ Le das un ticket con criterios de aceptación y te devuelve, en cada repositorio
 - La revisión puede hacerse con **varios jueces independientes** (con modelos distintos); todos deben aprobar.
 - Los agentes solo leen su espacio de trabajo y **nunca archivos de secretos** (`.env`, claves, `~/.ssh`…).
 - **Memoria persistente** por repo: los agentes guardan decisiones y descubrimientos que los siguientes tickets recuperan (validada solo si el ticket termina bien). Servidores **MCP externos** (Engram, Context7…) asignables por paso.
-- **Varios runtimes**: cada paso, y cada juez, puede correr en **Claude**, **OpenCode** (cualquier proveedor) o **Codex** (OpenAI), con las mismas skills, contratos y herramientas del flujo.
+- **Varios runtimes**: cada paso, y cada juez, puede correr en **Claude**, **GitHub Copilot**, **OpenCode** (cualquier proveedor) o **Codex** (OpenAI), con las mismas skills, contratos y herramientas del flujo.
 - **Bucle continuo** (`start`): toma tickets de una carpeta, de **GitHub Issues** o de **Azure DevOps**, y según el modo deja las ramas, espera tu aprobación o las **fusiona con verificación y reversión**. Publica el resultado como comentario en el ticket.
 
-Basado en el flujo de Alpaca Tech (*"Así programo con IA tras +500 horas"*) y en el ciclo de Orca, con ideas de gentle-ai (skills por fase, revisión doble, lista de secretos, memoria) y Noodle (skills como punto de extensión, backlog, bucle con modos). Usa el [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/structured-outputs) y, si los configuras, el Codex SDK y el SDK de OpenCode.
+Basado en el flujo de Alpaca Tech (*"Así programo con IA tras +500 horas"*) y en el ciclo de Orca, con ideas de gentle-ai (skills por fase, revisión doble, lista de secretos, memoria) y Noodle (skills como punto de extensión, backlog, bucle con modos). Usa el [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/structured-outputs) y, si los configuras, el Copilot SDK, el Codex SDK y el SDK de OpenCode.
 
 ## Inicio rápido
 
@@ -49,7 +49,7 @@ Sigue el **[tutorial completo](docs/09-tutorial.md)**: del ticket a las ramas li
 | 13 | [Skills de los pasos](docs/13-skills.md) | Personalizar cada agente con `SKILL.md`, skills de Claude Code y plugins |
 | 14 | [Memoria y MCP](docs/14-memoria-y-mcp.md) | Memoria persistente, `memory`, servidores MCP externos por paso |
 | 15 | [Backlog y bucle](docs/15-backlog-y-bucle.md) | Carpeta, GitHub, Azure DevOps; modos manual/supervised/auto; fusión verificada |
-| 16 | [Runtimes](docs/16-runtimes.md) | Claude, Codex y OpenCode por paso y por juez; qué aísla cada uno; puente MCP |
+| 16 | [Runtimes](docs/16-runtimes.md) | Claude, Copilot, Codex y OpenCode por paso y por juez; qué aísla cada uno; puente MCP |
 
 ## El ciclo
 
@@ -84,15 +84,16 @@ VERIFICACIÓN
 | `start --repo <r> [--mode …] [--once]` | Bucle continuo sobre el backlog | Sí |
 | `status` / `approve <ID>` / `reject <ID>` / `requeue <ID>` | Estado y revisión de los tickets del bucle | No |
 | `memory --repo <r> [list \| search … \| forget …]` | Consulta y edita la memoria del repo | No |
+| `models --repo <r> copilot` | Lista los ids de modelo de Copilot de tu cuenta | No |
 
 Códigos de salida de `run`: `0` completed · `3` needs_human · `1` failed.
 
 ## Requisitos
 
-Node 20+, git 2.30+, y Claude Code con sesión iniciada (o `ANTHROPIC_API_KEY`). macOS o Linux; en Windows, WSL2. Opcional: sesión de Codex (`npx codex login`) u OpenCode en el PATH si envías pasos a esos runtimes.
+Node 20+, git 2.30+, y Claude Code con sesión iniciada (o `ANTHROPIC_API_KEY`). macOS o Linux; en Windows, WSL2. Opcional: sesión de GitHub Copilot (`copilot login` o un token), de Codex (`npx codex login`) u OpenCode en el PATH si envías pasos a esos runtimes.
 
 ## Estado
 
-Probado con un runner simulado sobre repos y comandos reales, y HTTP simulado para GitHub y Azure DevOps (`npm test`: reglas de permisos, runtimes Codex/OpenCode con SDK simulados y el puente MCP con un cliente real, 18 escenarios del flujo, 8 de memoria/backlog/bucle y el tutorial completo). La integración con el modelo real (sesiones retomadas, herramienta `ask`, salida estructurada) sigue la documentación del Agent SDK, pero conviene validarla en tu primer ticket revisando `events.jsonl`.
+Probado con un runner simulado sobre repos y comandos reales, y HTTP simulado para GitHub y Azure DevOps (`npm test`: reglas de permisos, runtimes Codex/OpenCode/Copilot con SDK simulados y el puente MCP con un cliente real, 18 escenarios del flujo, 8 de memoria/backlog/bucle y el tutorial completo). La integración con el modelo real (sesiones retomadas, herramienta `ask`, salida estructurada) sigue la documentación del Agent SDK, pero conviene validarla en tu primer ticket revisando `events.jsonl`.
 
 Pendiente: push y creación de PRs, atender comentarios de PRs, interfaz web con el feed de eventos, y cancelar workers en curso cuando otro falla. Ver [arquitectura](docs/11-arquitectura.md#extensiones-habituales).

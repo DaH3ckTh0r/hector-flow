@@ -132,7 +132,8 @@ export class ToolBridge {
   }
 }
 
-async function call(tools: BridgeTools, name: string, args: Record<string, unknown>): Promise<string> {
+/** Runs one of the workflow tools by name (also used in-process by runtimes that host tools themselves). */
+export async function call(tools: BridgeTools, name: string, args: Record<string, unknown>): Promise<string> {
   if (name === "ask" && tools.ask) return tools.ask(String(args.question ?? ""));
   if (name === "memory_search" && tools.memory?.search) {
     return tools.memory.search(String(args.query ?? ""), typeof args.limit === "number" ? args.limit : undefined);

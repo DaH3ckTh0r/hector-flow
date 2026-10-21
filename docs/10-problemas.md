@@ -102,7 +102,7 @@ El flujo se detiene a propósito para que decidas tú. Los worktrees de tarea se
 | `N open assumption(s): review before merging` | Modo `auto` con supuestos abiertos. | Revisa los supuestos y `approve`, o desactiva `autoMergeRequiresNoAssumptions`. |
 | `⚠ could not report back to …` | No se pudo comentar en GitHub/ADO. | Revisa el permiso de escritura del token; el bucle sigue igualmente. |
 
-## Runtimes (Codex, OpenCode)
+## Runtimes (Codex, OpenCode, Copilot)
 
 | Mensaje | Causa | Solución |
 |---|---|---|
@@ -112,6 +112,11 @@ El flujo se detiene a propósito para que decidas tú. Los worktrees de tarea se
 | `Codex failed: …` al empezar el paso | Codex sin sesión iniciada o sin `OPENAI_API_KEY`, o modelo desconocido. | `npx codex login`; revisa `runtime.codex.model`. |
 | `Codex did not return JSON` | El modelo terminó sin respuesta estructurada (por ejemplo, se quedó sin turnos). | Reintenta; sube `effort` o usa un modelo más capaz para ese paso. |
 | `denied edit — … is a locked test file` (con OpenCode) | Igual que con Claude: el agente intentó tocar un test bloqueado. | Normal y esperado. |
+| `✖ copilot is signed in` (en `check`) / `Copilot is not signed in` | Sin sesión de Copilot ni token. | `npm i -g @github/copilot && copilot login`, o un fine-grained PAT con "Copilot Requests" en `COPILOT_GITHUB_TOKEN` o en la variable de `runtime.copilot.tokenEnv`. Los PAT clásicos (`ghp_`) no sirven. |
+| `Environment variable X is not set.` (paso en Copilot) | `runtime.copilot.tokenEnv` nombra una variable vacía. | Expórtala, o quita `tokenEnv`. |
+| `Copilot failed: … model …` | El id de modelo no existe o tu plan no lo incluye. | `hector-flow models --repo <repo> copilot` y usa uno de esos ids. |
+| `denied write — Your organization's Copilot policy requires a person…` | La política gestionada de Copilot exige aprobar esa acción a mano. | Pide que la política permita esa acción en Copilot CLI, o envía ese paso a otro runtime. |
+| `Copilot finished without a final message` | El paso agotó `runtime.copilot.timeoutMinutes` o la sesión falló. | Mira el error que sigue al mensaje; sube `timeoutMinutes` si el paso es largo. |
 | `⚠ codex cannot use SSE MCP servers` | Codex solo soporta servidores stdio y HTTP. | Usa la variante HTTP del servidor, o deja ese paso en Claude u OpenCode. |
 | Un juez en otro runtime usa un modelo de Claude por error | `models.review` o el front-matter nombran modelos de Claude y no se aplican fuera de Claude. | Define `model` en el juez o en `runtime.<nombre>.model`. |
 

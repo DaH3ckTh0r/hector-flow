@@ -9,6 +9,7 @@
 | git | 2.30 o superior (usa `git worktree`) | `git --version` |
 | Acceso a Claude | Claude Code con sesión iniciada, o `ANTHROPIC_API_KEY` | `claude --version` y abrir `claude` una vez |
 | Codex (opcional) | Sesión de Codex (`npx codex login`) u `OPENAI_API_KEY`; el binario viene con el SDK | Solo si algún paso usa `runtime: codex` |
+| GitHub Copilot (opcional) | Suscripción de Copilot con Copilot CLI; `copilot login` (`npm i -g @github/copilot`) o un fine-grained PAT con "Copilot Requests". El runtime viene con el SDK | Solo si algún paso usa `runtime: copilot`; `check` lo verifica |
 | OpenCode (opcional) | `opencode` en el PATH (`npm i -g opencode-ai`) con un proveedor configurado | `opencode --version`; solo si algún paso usa `runtime: opencode` |
 | Sistema operativo | macOS o Linux. En Windows, usa WSL2 (no está probado en Windows nativo). | |
 

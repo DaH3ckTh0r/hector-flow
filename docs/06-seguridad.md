@@ -19,7 +19,7 @@ hector-flow deja que agentes de IA editen código y ejecuten comandos sin pedir 
 
 ### Con otros runtimes
 
-Todo lo anterior describe a Claude. **OpenCode** aplica las mismas reglas: cada herramienta pide permiso y el flujo responde con `decide()`. **Codex** no permite aprobar cada herramienta; el flujo usa su sandbox del sistema operativo (solo lectura, o escritura limitada a la carpeta del componente, sin red) y las revisiones de git de después de cada paso, pero **no puede aplicar `readDenyPaths`, las carpetas legibles ni `allowedCommands`**. Tabla completa en [16-runtimes.md](16-runtimes.md#aislamiento-qué-protege-cada-runtime).
+Todo lo anterior describe a Claude. **OpenCode** y **GitHub Copilot** aplican las mismas reglas: cada herramienta pide permiso y el flujo responde con `decide()` (en Copilot, además, un gancho revisa las lecturas que no piden permiso). **Codex** no permite aprobar cada herramienta; el flujo usa su sandbox del sistema operativo (solo lectura, o escritura limitada a la carpeta del componente, sin red) y las revisiones de git de después de cada paso, pero **no puede aplicar `readDenyPaths`, las carpetas legibles ni `allowedCommands`**. Tabla completa en [16-runtimes.md](16-runtimes.md#aislamiento-qué-protege-cada-runtime).
 
 ## Permisos por modo
 
@@ -83,6 +83,7 @@ Sé consciente de estos límites antes de usarlo en un repo con acceso a sistema
 | **Memoria** | Los agentes escriben en ella texto libre que otros tickets leerán. | Solo se valida lo de ejecuciones `completed`; revísala con `memory list` y borra lo que no sea cierto. |
 | **Las instrucciones de `CLAUDE.md` y `.claude/`** | Con `loadProjectSettings: true` los agentes las siguen. | Revisa esos archivos, o desactiva la opción. |
 | **Pasos en Codex** | Sin gancho por herramienta: la lista de secretos y la de comandos no se aplican. Codex lee `AGENTS.md`. | Sin secretos legibles por el usuario del proceso; contenedor; o deja en Codex solo pasos que no lo necesiten. |
+| **Pasos en Copilot** | Copilot lee `.github/copilot-instructions.md` y `AGENTS.md`; el código va a los modelos de tu suscripción de Copilot, bajo la política de tu organización. Una solicitud que la política marca para aprobación humana se rechaza. | Revisa esos archivos y la política de Copilot de tu organización. |
 | **Pasos en OpenCode** | OpenCode lee su `opencode.json` y `AGENTS.md`; el modelo lo da un proveedor externo. | Revisa esos archivos y a qué proveedor envías el código. |
 
 En resumen: los permisos de hector-flow evitan que un agente haga cosas **fuera de su tarea** (tocar otro componente, debilitar tests, ejecutar comandos arbitrarios), pero no son un sandbox del sistema operativo.

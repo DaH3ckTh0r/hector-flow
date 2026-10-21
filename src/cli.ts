@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
 import { resolve } from "node:path";
-import { preflight } from "./check.js";
+import { listCopilotModels, preflight } from "./check.js";
 import { cleanTicket } from "./clean.js";
 import { loadConfig, RoleSchema, type Role } from "./config.js";
 import { ejectSkills, loadSkills, resolveStep } from "./skills.js";
@@ -24,6 +24,7 @@ hector-flow approve --repo <path> <ID>
 hector-flow reject  --repo <path> <ID> [--reason <text>]
 hector-flow requeue --repo <path> <ID>
 hector-flow memory  --repo <path> [list [--all] | search <words…> | forget <id…>]
+hector-flow models  --repo <path> copilot                                  [--config <path>]
 
   check    Validates config, repos, each component's commands and the ticket. No model calls.
   run      Implements the ticket: worktrees per task, branches hector/<ID> in every touched repo.
@@ -40,6 +41,7 @@ hector-flow memory  --repo <path> [list [--all] | search <words…> | forget <id
   reject   Discards a ticket's branches and marks it rejected.
   requeue  Cleans a ticket and forgets its state so the loop runs it again.
   memory   Lists, searches or removes entries of the repo's persistent memory.
+  models   Lists the model ids a runtime accepts (currently: copilot). No model calls.
 
   --repo         Primary repository (where hector-flow.config.json lives)
   --ticket       Markdown ticket with '# ID: title' and '## Acceptance criteria'
@@ -55,7 +57,7 @@ hector-flow memory  --repo <path> [list [--all] | search <words…> | forget <id
 Exit codes: 0 completed/ok · 3 needs_human · 1 failed · 2 usage error
 `;
 
-const COMMANDS = ["check", "run", "distill", "clean", "skills", "start", "status", "approve", "reject", "requeue", "memory"] as const;
+const COMMANDS = ["check", "run", "distill", "clean", "skills", "start", "status", "approve", "reject", "requeue", "memory", "models"] as const;
 type Command = (typeof COMMANDS)[number];
 
 async function main(): Promise<number> {
@@ -163,6 +165,21 @@ async function main(): Promise<number> {
     }
     const existed = await requeueTicket({ repo, config, ticketId: ticketArg });
     console.log(existed ? `${ticketArg} requeued: the loop will run it again.` : `${ticketArg} had no state; branches cleaned if any.`);
+    return 0;
+  }
+
+  if (command === "models") {
+    const which = positionals[1] ?? "copilot";
+    if (which !== "copilot") return (console.log("Usage: hector-flow models --repo <path> copilot"), 2);
+    const models = await listCopilotModels(config);
+    const width = Math.max(4, ...models.map((m) => m.id.length));
+    console.log(`${"id".padEnd(width)}  premium×  efforts            name`);
+    for (const m of models) {
+      console.log(
+        `${m.id.padEnd(width)}  ${(m.multiplier === undefined ? "-" : String(m.multiplier)).padEnd(8)}  ${(m.efforts.join(",") || "-").padEnd(17)}  ${m.name}${m.enabled ? "" : "  (disabled by policy)"}`,
+      );
+    }
+    console.log(`\nUse an id in runtime.copilot.model, runtime.steps.<role>.model or a judge's model.`);
     return 0;
   }
 

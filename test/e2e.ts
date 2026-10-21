@@ -721,9 +721,10 @@ async function runtimeRouting() {
     models: { coder: "sonnet", plan: "opus" },
     efforts: { coder: "high" },
     runtime: {
-      steps: { coder: { use: "codex", model: "gpt-5.5-codex" }, enrich: "opencode" },
+      steps: { coder: { use: "codex", model: "gpt-5.5-codex" }, enrich: "opencode", qaPlan: "copilot" },
       codex: { effort: "medium" },
       opencode: { model: "openrouter/qwen3-coder" },
+      copilot: { model: "claude-sonnet-4.5" },
     },
     review: { judges: [{ name: "claude", model: "opus" }, { name: "codex", runtime: "codex", model: "gpt-5.5", effort: "xhigh" }] },
   });
@@ -745,10 +746,11 @@ async function runtimeRouting() {
   assert.deepEqual(of("enrich"), [["opencode", "openrouter/qwen3-coder", undefined]], "OpenCode: runtime model, no Claude effort");
   assert.deepEqual(of("plan"), [["claude", "opus", undefined]], "unrouted steps stay on Claude with Claude models");
   assert.deepEqual(of("coder"), [["codex", "gpt-5.5-codex", "medium"]], "Codex: step model wins over models.coder; codex effort over efforts.coder");
+  assert.deepEqual(of("qaPlan"), [["copilot", "claude-sonnet-4.5", undefined]], "Copilot: its own model names");
   assert.deepEqual(of("review").sort(), [["claude", "opus", undefined], ["codex", "gpt-5.5", "xhigh"]], "each judge on its own runtime");
   const events = readFileSync(join(s.runDir, "events.jsonl"), "utf8");
   assert.match(events, /"step":"implement-T1"[^\n]*"runtime":"codex"/, "the run log says which runtime ran a step");
-  console.log("✓ runtimes: steps and judges routed to Claude, Codex or OpenCode with the right model and effort");
+  console.log("✓ runtimes: steps and judges routed to Claude, Codex, OpenCode or Copilot with the right model and effort");
 }
 
 function mergeReviewsUnit() {

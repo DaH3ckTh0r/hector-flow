@@ -1,21 +1,52 @@
 {
   "testCommand": "npm test",
-  "lockedPaths": ["test/**"],
-  "allowedCommands": ["npm test", "npx tsc"],
-  "models": { "plan": "opus", "diagnose": "opus", "coder": "sonnet" },
+  "lockedPaths": [
+    "test/**"
+  ],
+  "allowedCommands": [
+    "npm test",
+    "npx tsc"
+  ],
+  "models": {
+    "plan": "opus",
+    "diagnose": "opus",
+    "coder": "sonnet"
+  },
   "runtime": {
     "default": "claude",
     "steps": {
-      "coder": { "use": "codex", "model": "gpt-5.5-codex", "effort": "high" },
-      "qaPlan": "opencode"
+      "coder": {
+        "use": "codex",
+        "model": "gpt-5.5-codex",
+        "effort": "high"
+      },
+      "qaPlan": "opencode",
+      "enrich": {
+        "use": "copilot"
+      }
     },
-    "codex": { "networkAccess": false },
-    "opencode": { "model": "anthropic/claude-haiku-4-5" }
+    "codex": {
+      "networkAccess": false
+    },
+    "opencode": {
+      "model": "anthropic/claude-haiku-4-5"
+    },
+    "copilot": {
+      "timeoutMinutes": 30
+    }
   },
   "review": {
     "judges": [
-      { "name": "claude", "model": "opus", "focus": "Focus on security and data exposure." },
-      { "name": "codex", "runtime": "codex", "model": "gpt-5.5" }
+      {
+        "name": "claude",
+        "model": "opus",
+        "focus": "Focus on security and data exposure."
+      },
+      {
+        "name": "codex",
+        "runtime": "codex",
+        "model": "gpt-5.5"
+      }
     ]
   }
 }

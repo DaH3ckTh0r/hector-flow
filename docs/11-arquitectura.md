@@ -30,7 +30,8 @@ src/
 │   ├── claude-runner.ts   Claude Agent SDK; decide() en hook PreToolUse y canUseTool; decisionContext()
 │   ├── codex-runner.ts    OpenAI Codex SDK; sandbox por modo, MCP por config, esquema estricto
 │   ├── opencode-runner.ts OpenCode; un servidor por ejecución, permisos respondidos con decide()
-│   └── strict-schema.ts   Esquema estricto (opcionales → null) para Codex
+│   ├── copilot-runner.ts  GitHub Copilot SDK; permisos y gancho de lectura con decide(), herramientas en proceso
+│   └── strict-schema.ts   Esquema estricto (opcionales → null) para Codex y Copilot
 └── tools/
     ├── git.ts             Worktrees, commits exactos, merges, reversiones
     └── shell.ts           Ejecución de comandos con timeout y salida acotada
@@ -40,7 +41,7 @@ skills/                    Skills de serie: _shared/RULES.md y <rol>/SKILL.md
 test/
 ├── helpers.ts             ScriptedRunner: un AgentRunner falso, determinista
 ├── runner-policy.ts       Reglas de permisos del runner real
-├── runtimes.ts            Puente MCP (cliente MCP real), Codex y OpenCode con SDK simulados, enrutamiento
+├── runtimes.ts            Puente MCP (cliente MCP real), Codex, OpenCode y Copilot con SDK simulados, enrutamiento
 ├── e2e.ts                 18 escenarios del flujo
 ├── loop.ts                Memoria, acceso MCP, adaptadores (HTTP simulado) y el bucle
 └── tutorial.ts            El tutorial de punta a punta
@@ -53,7 +54,7 @@ test/
 3. **Todo agente devuelve JSON con contrato.** Se valida dos veces: con JSON Schema en el SDK y con zod en el runner.
 4. **Confiar en git, no en lo que afirma el agente.** Los archivos del ledger, las reversiones y los commits se calculan con git.
 5. **Defensa en profundidad.** Permisos antes de cada herramienta y revisiones de git después de cada paso.
-6. **La IA es intercambiable.** El flujo solo conoce `AgentRunner`. `RouterRunner` envía cada paso al runtime que le toca (Claude, Codex u OpenCode); ver [16-runtimes.md](16-runtimes.md).
+6. **La IA es intercambiable.** El flujo solo conoce `AgentRunner`. `RouterRunner` envía cada paso al runtime que le toca (Claude, Codex, OpenCode o Copilot); ver [16-runtimes.md](16-runtimes.md).
 
 ## La interfaz `AgentRunner`
 
@@ -74,7 +75,7 @@ interface AgentRequest<S> {
   ask?: (q: string) => Promise<string>;  // exponer la herramienta ask
   scope?: AgentScope;              // root, writeRoot, lockedPaths, testPaths, allowedCommands
   readDirs?: string[];             // carpetas extra de solo lectura
-  runtime?: "claude" | "codex" | "opencode";  // solo lo mira RouterRunner
+  runtime?: "claude" | "codex" | "opencode" | "copilot";  // solo lo mira RouterRunner
   model?: string;                  // resuelto por resolveRuntime (juez > runtime.steps > models/skill o runtime.<x>.model)
   effort?: Effort;
   claudeSkills?: string[];         // skills de Claude Code del paso ([] = ninguna)

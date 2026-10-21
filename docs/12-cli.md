@@ -5,7 +5,7 @@ npm run flow -- <comando> [opciones]     # sin compilar, desde la carpeta de hec
 hector-flow <comando> [opciones]         # tras npm run build && npm link
 ```
 
-Comandos: `check`, `run`, `distill`, `clean`, `skills`, `start`, `status`, `approve`, `reject`, `requeue`, `memory`.
+Comandos: `check`, `run`, `distill`, `clean`, `skills`, `start`, `status`, `approve`, `reject`, `requeue`, `memory`, `models`.
 
 Las rutas relativas de `--repo`, `--ticket` y `--config` se resuelven desde la carpeta **donde escribiste el comando**, también con `npm run flow` (que internamente cambia a la carpeta de hector-flow; se usa la variable `INIT_CWD` que npm define con la carpeta original). Las rutas con `~` las expande tu shell.
 
@@ -39,7 +39,7 @@ Comprueba, en orden:
 5. Que `buildCommand`, `testCommand` y `lintCommand` de cada componente **pasan sobre el código actual**.
 6. Qué skills de pasos están personalizadas, y sus avisos (⚠).
 7. Que existen las carpetas de `pluginDirs`, y cuántos jueces revisan si hay más de uno.
-8. Si algún paso usa otro runtime: qué runtime ejecuta cada paso, que `opencode` está en el PATH (✖ si no), que existe `runtime.codex.path` si lo defines, y avisos (⚠) de lo que Codex no aplica y de servidores SSE que Codex no soporta. Ver [16-runtimes.md](16-runtimes.md).
+8. Si algún paso usa otro runtime: qué runtime ejecuta cada paso, que `opencode` está en el PATH (✖ si no), que Copilot tiene sesión iniciada (✖ si no; inicia su runtime unos instantes, sin llamar a ningún modelo), que existen `runtime.codex.path` / `runtime.copilot.path` si los defines, y avisos (⚠) de lo que Codex no aplica y de servidores SSE que Codex no soporta. Ver [16-runtimes.md](16-runtimes.md).
 9. Que el ticket se puede leer y tiene criterios.
 
 Símbolos: `✔` correcto, `⚠` aviso, `✖` error. Termina con `Ready to run.` (código 0) o `N check(s) failed.` (código 1).
@@ -159,6 +159,16 @@ npm run flow -- requeue --repo <ruta> <ID>
 ```
 
 El ID también se puede pasar con `--ticket-id`.
+
+## `models`
+
+Lista los ids de modelo que acepta un runtime, para usarlos en `runtime.<runtime>.model`, en `runtime.steps.<rol>.model` o en el `model` de un juez. Por ahora solo `copilot`. No llama a ningún modelo.
+
+```bash
+npm run flow -- models --repo <ruta> copilot
+```
+
+Muestra el id, el multiplicador de *premium requests*, los niveles de esfuerzo admitidos y el nombre. Los modelos que la política de tu organización deshabilita aparecen marcados. Falla si Copilot no tiene sesión iniciada.
 
 ## `memory`
 
