@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import type { FlowConfig } from "../config.js";
 import { toJsonSchema } from "../schemas.js";
+import { addModel, type Usage } from "../usage.js";
 import { call, ToolBridge, type BridgeTools } from "../tool-bridge.js";
 import { AgentError, type AgentRequest, type AgentResult, type AgentRunner } from "./agent-runner.js";
 import { decide, decisionContext, type DecisionContext, type Verdict } from "./claude-runner.js";
@@ -126,11 +127,15 @@ export class CopilotAgentRunner implements AgentRunner {
 
     let session: CopilotSessionLike | undefined;
     let turns = 0;
+    const usage: Usage = {};
     try {
       session = req.resumeSessionId
         ? await client.resumeSession(req.resumeSessionId, sessionConfig)
         : await client.createSession({ ...sessionConfig, trustWorkingDirectory: "session" });
-      session.on("assistant.usage", () => void turns++);
+      session.on("assistant.usage", (e) => {
+        turns++;
+        addCopilotUsage(usage, e.data as CopilotUsageEvent);
+      });
       let sessionError: string | undefined;
       session.on("session.error", (e) => void (sessionError = String((e.data as { message?: string })?.message ?? "session error")));
 
@@ -138,26 +143,27 @@ export class CopilotAgentRunner implements AgentRunner {
         { prompt: req.prompt, responseSchema: strictify(toJsonSchema(req.schema)) as Record<string, unknown> },
         settings.timeoutMinutes * 60_000,
       );
-      if (!message) throw new AgentError(`Copilot finished without a final message${sessionError ? `: ${sessionError}` : ""}`, req.role);
+      if (!message) throw new AgentError(`Copilot finished without a final message${sessionError ? `: ${sessionError}` : ""}`, req.role, 0, usage);
       let raw: unknown;
       try {
         raw = dropNulls(JSON.parse(message.data.content));
       } catch {
-        throw new AgentError(`Copilot did not return JSON: ${message.data.content.slice(0, 200)}`, req.role);
+        throw new AgentError(`Copilot did not return JSON: ${message.data.content.slice(0, 200)}`, req.role, 0, usage);
       }
       const parsed = req.schema.safeParse(raw);
-      if (!parsed.success) throw new AgentError(`Structured output did not match the contract: ${parsed.error.message}`, req.role);
+      if (!parsed.success) throw new AgentError(`Structured output did not match the contract: ${parsed.error.message}`, req.role, 0, usage);
       return {
         output: parsed.data,
         sessionId: session.sessionId,
         costUsd: 0, // Copilot bills premium requests, not USD.
         turns: Math.max(1, turns),
+        usage,
         durationMs: Date.now() - started,
         denials,
       };
     } catch (err) {
       if (err instanceof AgentError) throw err;
-      throw new AgentError(`Copilot failed: ${(err as Error).message}`, req.role);
+      throw new AgentError(`Copilot failed: ${(err as Error).message}`, req.role, 0, usage);
     } finally {
       await session?.disconnect().catch(() => undefined);
     }
@@ -190,6 +196,40 @@ export class CopilotAgentRunner implements AgentRunner {
     this.client.catch(() => (this.client = null));
     return this.client;
   }
+}
+
+/** The fields of Copilot's "assistant.usage" event (one per model call) that the run log keeps. */
+export interface CopilotUsageEvent {
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+  /** Model multiplier for billing (premium requests). */
+  cost?: number;
+  copilotUsage?: { totalNanoAiu?: number };
+}
+
+/**
+ * Adds one model call. Copilot reports cache reads separately; whether its
+ * inputTokens already include them is not documented, so input is kept as
+ * reported (see docs/07-observabilidad.md).
+ */
+export function addCopilotUsage(into: Usage, e: CopilotUsageEvent | undefined): Usage {
+  if (!e) return into;
+  const extra: Record<string, number> = {};
+  if (e.copilotUsage?.totalNanoAiu) extra.nanoAiu = e.copilotUsage.totalNanoAiu;
+  if (e.cost) extra.billingMultiplier = e.cost;
+  return addModel(into, e.model ?? "copilot default", {
+    input: e.inputTokens ?? 0,
+    output: e.outputTokens ?? 0,
+    cacheRead: e.cacheReadTokens ?? 0,
+    cacheWrite: e.cacheWriteTokens ?? 0,
+    reasoning: e.reasoningTokens ?? 0,
+    costUsd: 0,
+    ...(Object.keys(extra).length ? { extra } : {}),
+  });
 }
 
 /** Maps one Copilot permission request onto decide(). */

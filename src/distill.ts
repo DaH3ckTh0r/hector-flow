@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { appendFile, readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { FlowConfig } from "./config.js";
 import { LessonStore } from "./lessons.js";
@@ -9,6 +9,7 @@ import { resolveRuntime } from "./runtimes.js";
 import { loadSkills, resolveStep } from "./skills.js";
 import { readTicket } from "./ticket.js";
 import { git } from "./tools/git.js";
+import type { Usage } from "./usage.js";
 import { flowPaths, type RunSummary } from "./workflow.js";
 
 /**
@@ -22,7 +23,7 @@ export async function distillTicket(opts: {
   ticketId: string;
   config: FlowConfig;
   runner: AgentRunner;
-}): Promise<{ added: number; lessons: Distill["lessons"]; runDir: string } | { added: 0; reason: string }> {
+}): Promise<{ added: number; lessons: Distill["lessons"]; runDir: string; costUsd: number; usage?: Usage } | { added: 0; reason: string }> {
   const repoRoot = await git(resolve(opts.repo), "rev-parse", "--show-toplevel");
   const paths = flowPaths(repoRoot, opts.config);
 
@@ -55,6 +56,7 @@ export async function distillTicket(opts: {
 
   const step = resolveStep(await loadSkills(repoRoot, opts.config), "distill", opts.config);
   const choice = resolveRuntime(opts.config, "distill", step);
+  const t0 = Date.now();
   const res = await opts.runner.run({
     role: "distill",
     mode: "readonly",
@@ -69,6 +71,24 @@ export async function distillTicket(opts: {
     readDirs: repos.map((r) => r.worktree).filter((w) => w !== cwd),
   });
 
+  // Recorded in the ticket's own run log, so usage reports include it.
+  const runId = runDir.split(/[\\/]/).pop()!;
+  await appendFile(
+    join(runDir, "events.jsonl"),
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      runId,
+      type: "step.end",
+      step: "distill",
+      ok: true,
+      durationMs: Date.now() - t0,
+      costUsd: res.costUsd,
+      role: "distill",
+      runtime: choice.runtime,
+      usage: res.usage,
+    }) + "\n",
+  );
+
   const added = await store.addGuidelines(res.output.lessons.map((l) => ({ ...l, ticketId: opts.ticketId })));
-  return { added, lessons: res.output.lessons, runDir };
+  return { added, lessons: res.output.lessons, runDir, costUsd: res.costUsd, usage: res.usage };
 }

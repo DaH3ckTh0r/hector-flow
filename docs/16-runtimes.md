@@ -95,6 +95,7 @@ Esta es la diferencia importante. Claude, OpenCode y Copilot piden permiso **ant
 | Lista de comandos (`allowedCommands`) | ✔ | ✔ | ✔ | ✘ **no se aplica** (se le indica en el prompt) |
 | Red | Herramientas web denegadas | `webfetch`/`websearch` rechazados | `web_fetch`/`web_search` quitados; permisos `url` rechazados | ✔ sin red en el sandbox, búsqueda web desactivada |
 | Subagentes | Denegados | `task` rechazado | `task` y agentes quitados | No disponible en `codex exec` |
+| Tokens por llamada | ✔ por modelo | ✔ por modelo | ✔ por modelo | ✔ (modelo configurado) |
 | Costo en USD | ✔ | ✔ (lo informa OpenCode) | ✘ Copilot cobra *premium requests* (`costUsd` = 0) | ✘ solo tokens (`costUsd` = 0) |
 
 **Consecuencia práctica:** si un paso corre en Codex, no dejes secretos dentro de los repos ni en carpetas que el usuario del proceso pueda leer, y considera que puede ejecutar cualquier comando dentro de su carpeta (sin red). `check` lo advierte.

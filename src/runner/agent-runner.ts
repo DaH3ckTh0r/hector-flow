@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import type { Effort, Role, RuntimeName } from "../config.js";
+import type { Usage } from "../usage.js";
 
 /**
  * What an agent is allowed to do to the worktree.
@@ -81,6 +82,8 @@ export interface AgentResult<T> {
   durationMs: number;
   /** Tool calls the guards refused, for the run log. */
   denials: Array<{ tool: string; reason: string }>;
+  /** Tokens this call consumed, by model (only this call, never earlier turns of a resumed session). */
+  usage?: Usage;
 }
 
 /**
@@ -99,6 +102,8 @@ export class AgentError extends Error {
     message: string,
     readonly role: Role,
     readonly costUsd = 0,
+    /** Tokens spent before the failure, when known. */
+    readonly usage?: Usage,
   ) {
     super(message);
   }

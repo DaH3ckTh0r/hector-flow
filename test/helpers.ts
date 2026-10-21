@@ -28,6 +28,9 @@ export interface Call {
   runtime?: string;
 }
 
+/** What every scripted call reports: 185 tokens, $0.01. */
+export const SCRIPTED_USAGE = { input: 100, output: 20, cacheRead: 50, cacheWrite: 10, reasoning: 5, costUsd: 0.01 };
+
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
@@ -81,7 +84,15 @@ export class ScriptedRunner implements AgentRunner {
     if (isWorker) this.maxActive = Math.max(this.maxActive, ++this.active);
     try {
       await sleep(this.delayOf(key));
-      return { output: req.schema.parse(await next(req.cwd, r)), sessionId, costUsd: 0.01, turns: 1, durationMs: 1, denials: [] };
+      return {
+        output: req.schema.parse(await next(req.cwd, r)),
+        sessionId,
+        costUsd: 0.01,
+        turns: 1,
+        durationMs: 1,
+        denials: [],
+        usage: { [req.model ?? "scripted"]: { ...SCRIPTED_USAGE } },
+      };
     } finally {
       if (isWorker) this.active--;
     }

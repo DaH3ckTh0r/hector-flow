@@ -12,6 +12,7 @@ Le das un ticket con criterios de aceptación y te devuelve, en cada repositorio
 - La revisión puede hacerse con **varios jueces independientes** (con modelos distintos); todos deben aprobar.
 - Los agentes solo leen su espacio de trabajo y **nunca archivos de secretos** (`.env`, claves, `~/.ssh`…).
 - **Memoria persistente** por repo: los agentes guardan decisiones y descubrimientos que los siguientes tickets recuperan (validada solo si el ticket termina bien). Servidores **MCP externos** (Engram, Context7…) asignables por paso.
+- **Consumo de tokens por llamada**: entrada, caché escrita y leída, salida y razonamiento, por modelo, en el log de cada paso, en el resumen y en `usage`.
 - **Varios runtimes**: cada paso, y cada juez, puede correr en **Claude**, **GitHub Copilot**, **OpenCode** (cualquier proveedor) o **Codex** (OpenAI), con las mismas skills, contratos y herramientas del flujo.
 - **Bucle continuo** (`start`): toma tickets de una carpeta, de **GitHub Issues** o de **Azure DevOps**, y según el modo deja las ramas, espera tu aprobación o las **fusiona con verificación y reversión**. Publica el resultado como comentario en el ticket.
 
@@ -85,6 +86,7 @@ VERIFICACIÓN
 | `status` / `approve <ID>` / `reject <ID>` / `requeue <ID>` | Estado y revisión de los tickets del bucle | No |
 | `memory --repo <r> [list \| search … \| forget …]` | Consulta y edita la memoria del repo | No |
 | `models --repo <r> copilot` | Lista los ids de modelo de Copilot de tu cuenta | No |
+| `usage --repo <r> [--by model\|step\|ticket\|day…]` | Tokens consumidos (entrada, caché, salida, razonamiento) y costo | No |
 
 Códigos de salida de `run`: `0` completed · `3` needs_human · `1` failed.
 

@@ -20,6 +20,7 @@ import {
 import type { AgentMode, AgentRequest, AgentResult, AgentRunner, AgentScope } from "./runner/agent-runner.js";
 import { runDag, validateDag } from "./scheduler.js";
 import { resolveRuntime } from "./runtimes.js";
+import { addCounts, emptyCounts, type TokenCounts, type Usage } from "./usage.js";
 import { loadSkills, resolveStep, type SkillSet } from "./skills.js";
 import {
   AnswerSchema,
@@ -101,8 +102,17 @@ export interface RunSummary {
   /** Questions nobody could settle: the worker decided alone. Check these. */
   openAssumptions: QuestionRecord[];
   costUsd: number;
+  /** Tokens consumed by every agent call of the run (failed calls included). */
+  usage: RunUsage;
   durationMs: number;
   runDir: string;
+}
+
+export interface RunUsage {
+  total: TokenCounts;
+  /** Key: "<model> (<runtime>)". */
+  byModel: Record<string, TokenCounts>;
+  byRuntime: Record<string, TokenCounts>;
 }
 
 class StopFlow extends Error {
@@ -200,6 +210,14 @@ export async function implementTicket(opts: {
   const repoLock = new KeyedMutex();
 
   let costUsd = 0;
+  const usageByModel: Record<string, TokenCounts> = {};
+  const usageByRuntime: Record<string, TokenCounts> = {};
+  const recordUsage = (runtime: string, usage: Usage | undefined) => {
+    for (const [model, c] of Object.entries(usage ?? {})) {
+      addCounts((usageByModel[`${model} (${runtime})`] ??= emptyCounts()), c);
+      addCounts((usageByRuntime[runtime] ??= emptyCounts()), c);
+    }
+  };
   let repairAttempts = 0;
   let reviewRounds = 0;
   let activeWorkers = 0;
@@ -242,6 +260,11 @@ export async function implementTicket(opts: {
     memoriesSaved,
       openAssumptions: questions.filter((q) => !q.confident),
       costUsd: Math.round(costUsd * 10_000) / 10_000,
+      usage: {
+        total: Object.values(usageByRuntime).reduce((acc, c) => addCounts(acc, c), emptyCounts()),
+        byModel: usageByModel,
+        byRuntime: usageByRuntime,
+      },
       durationMs: Date.now() - started,
       runDir: log.runDir,
     };
@@ -341,13 +364,36 @@ export async function implementTicket(opts: {
         mcpServers: config.mcpAccess[role] ?? [],
       });
       costUsd += res.costUsd;
+      recordUsage(choice.runtime, res.usage);
       for (const d of res.denials) await log.emit({ type: "guard", step, action: `denied ${d.tool}`, detail: d.reason });
       await log.artifact(`${step}${attempt ? `-${attempt}` : ""}.json`, res.output);
-      await log.emit({ type: "step.end", step, ok: true, durationMs: Date.now() - t0, costUsd: res.costUsd, attempt });
+      await log.emit({
+        type: "step.end",
+        step,
+        ok: true,
+        durationMs: Date.now() - t0,
+        costUsd: res.costUsd,
+        attempt,
+        role,
+        runtime: choice.runtime,
+        usage: res.usage,
+      });
       return res;
     } catch (err) {
-      costUsd += (err as { costUsd?: number }).costUsd ?? 0;
-      await log.emit({ type: "step.end", step, ok: false, durationMs: Date.now() - t0, attempt });
+      const failed = err as { costUsd?: number; usage?: Usage };
+      costUsd += failed.costUsd ?? 0;
+      recordUsage(choice.runtime, failed.usage);
+      await log.emit({
+        type: "step.end",
+        step,
+        ok: false,
+        durationMs: Date.now() - t0,
+        costUsd: failed.costUsd,
+        attempt,
+        role,
+        runtime: choice.runtime,
+        usage: failed.usage,
+      });
       throw new StopFlow("failed", `${step}: ${(err as Error).message}`);
     }
   }

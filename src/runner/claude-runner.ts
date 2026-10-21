@@ -12,6 +12,7 @@ import { z } from "zod";
 import type { FlowConfig } from "../config.js";
 import { isCommandAllowed, PathPolicy, ReadPolicy } from "../guards.js";
 import { toJsonSchema } from "../schemas.js";
+import { diffUsage, type Usage } from "../usage.js";
 import { AgentError, type AgentMode, type AgentRequest, type AgentScope, type AgentResult, type AgentRunner } from "./agent-runner.js";
 
 const READ_TOOLS = new Set(["Read", "Glob", "Grep"]);
@@ -46,7 +47,17 @@ export type Verdict = { ok: true } | { ok: false; reason: string };
  * memory) and the external servers that mcpAccess grants to the step.
  */
 export class ClaudeAgentRunner implements AgentRunner {
-  constructor(private readonly config: FlowConfig) {}
+  /**
+   * Running totals each session reported last. A resumed session's result
+   * carries the totals of its earlier turns too, so a resumed call only
+   * counts the difference.
+   */
+  private readonly sessionTotals = new Map<string, { usage: Usage; costUsd: number }>();
+
+  constructor(
+    private readonly config: FlowConfig,
+    private readonly queryFn: typeof query = query,
+  ) {}
 
   async run<S extends z.ZodType>(req: AgentRequest<S>): Promise<AgentResult<z.infer<S>>> {
     const started = Date.now();
@@ -155,29 +166,55 @@ export class ClaudeAgentRunner implements AgentRunner {
     };
 
     let result: SDKResultMessage | undefined;
-    for await (const message of query({ prompt: req.prompt, options })) {
+    for await (const message of this.queryFn({ prompt: req.prompt, options })) {
       if (message.type === "result") result = message;
     }
 
     if (!result) throw new AgentError("Agent ended without a result message", req.role);
+
+    // Only what this call spent, even when the session was resumed.
+    const totals = { usage: claudeUsage(result.modelUsage), costUsd: result.total_cost_usd ?? 0 };
+    const before = req.resumeSessionId ? this.sessionTotals.get(req.resumeSessionId) : undefined;
+    if (result.session_id) this.sessionTotals.set(result.session_id, totals);
+    const usage = diffUsage(totals.usage, before?.usage);
+    const costUsd = Math.max(0, totals.costUsd - (before?.costUsd ?? 0));
+
     if (result.subtype !== "success") {
-      throw new AgentError(`Agent failed: ${result.subtype}`, req.role, result.total_cost_usd);
+      throw new AgentError(`Agent failed: ${result.subtype}`, req.role, costUsd, usage);
     }
 
     const parsed = req.schema.safeParse(result.structured_output);
     if (!parsed.success) {
-      throw new AgentError(`Structured output did not match the contract: ${parsed.error.message}`, req.role, result.total_cost_usd);
+      throw new AgentError(`Structured output did not match the contract: ${parsed.error.message}`, req.role, costUsd, usage);
     }
 
     return {
       output: parsed.data,
       sessionId: result.session_id,
-      costUsd: result.total_cost_usd,
+      costUsd,
+      usage,
       turns: result.num_turns,
       durationMs: Date.now() - started,
       denials,
     };
   }
+}
+
+/** The SDK's per-model totals as Usage (Anthropic input_tokens already exclude cache reads and writes). */
+export function claudeUsage(modelUsage: SDKResultMessage["modelUsage"] | undefined): Usage {
+  const out: Usage = {};
+  for (const [model, m] of Object.entries(modelUsage ?? {})) {
+    out[model] = {
+      input: m.inputTokens ?? 0,
+      output: m.outputTokens ?? 0,
+      cacheRead: m.cacheReadInputTokens ?? 0,
+      cacheWrite: m.cacheCreationInputTokens ?? 0,
+      reasoning: m.thinkingTokens ?? 0,
+      costUsd: m.costUSD ?? 0,
+      ...(m.webSearchRequests ? { extra: { webSearchRequests: m.webSearchRequests } } : {}),
+    };
+  }
+  return out;
 }
 
 /** Builds the policy context for one request; every runtime judges tool calls with it. */

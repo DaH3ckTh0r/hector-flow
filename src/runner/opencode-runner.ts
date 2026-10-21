@@ -2,6 +2,7 @@ import { isAbsolute, resolve } from "node:path";
 import type { z } from "zod";
 import type { FlowConfig } from "../config.js";
 import { toJsonSchema } from "../schemas.js";
+import { addModel, sumUsage, type Usage } from "../usage.js";
 import { ToolBridge } from "../tool-bridge.js";
 import { AgentError, type AgentRequest, type AgentResult, type AgentRunner } from "./agent-runner.js";
 import { decide, decisionContext, resolvedScope, type DecisionContext, type Verdict } from "./claude-runner.js";
@@ -17,6 +18,23 @@ export interface OpencodePermission {
 
 type Result<T> = Promise<{ data?: T; error?: unknown }>;
 
+/** OpenCode's per-step usage (a "step-finish" part). Its input excludes cache reads and writes. */
+export interface OpencodeStepFinish {
+  type: "step-finish";
+  cost?: number;
+  tokens?: { input: number; output: number; reasoning: number; cache: { read: number; write: number } };
+}
+type OpencodeMessageInfo = {
+  role?: string;
+  time?: { created: number };
+  providerID?: string;
+  modelID?: string;
+  structured?: unknown;
+  cost: number;
+  tokens?: OpencodeStepFinish["tokens"];
+  error?: { name?: string; data?: { message?: string } };
+};
+
 /** The slice of the OpenCode v2 client this runner uses, so tests can inject a fake. */
 export interface OpencodeClientLike {
   global: { event(options?: { signal?: AbortSignal }): Promise<{ stream: AsyncIterable<unknown> }> };
@@ -30,7 +48,8 @@ export interface OpencodeClientLike {
       variant?: string;
       format?: { type: "json_schema"; schema: Record<string, unknown>; retryCount?: number };
       parts?: Array<{ type: "text"; text: string }>;
-    }): Result<{ info: { structured?: unknown; cost: number; error?: { name?: string; data?: { message?: string } } }; parts: Array<{ type: string }> }>;
+    }): Result<{ info: OpencodeMessageInfo; parts: Array<{ type: string }> }>;
+    messages?(p: { sessionID: string; directory?: string; limit?: number }): Result<Array<{ info: OpencodeMessageInfo; parts: Array<{ type: string }> }>>;
   };
   permission: {
     reply(p: { requestID: string; directory?: string; reply?: "once" | "always" | "reject"; message?: string }): Result<unknown>;
@@ -117,6 +136,7 @@ export class OpenCodeAgentRunner implements AgentRunner {
         });
       });
 
+      const promptedAt = Date.now() - 1000;
       const model = req.model ?? this.config.runtime.opencode.model;
       const slash = model?.indexOf("/") ?? -1;
       const answer = await client.session.prompt({
@@ -130,16 +150,19 @@ export class OpenCodeAgentRunner implements AgentRunner {
       });
       if (!answer.data) throw new AgentError(`OpenCode request failed: ${describe(answer.error)}`, req.role);
       const { info, parts } = answer.data;
+      const usage = await this.usageSince(client, sessionID, req.cwd, promptedAt, answer.data);
+      const costUsd = sumUsage(usage).costUsd || info.cost || 0;
       if (info.error) {
-        throw new AgentError(`OpenCode failed: ${info.error.data?.message ?? info.error.name ?? "unknown error"}`, req.role, info.cost);
+        throw new AgentError(`OpenCode failed: ${info.error.data?.message ?? info.error.name ?? "unknown error"}`, req.role, costUsd, usage);
       }
       const parsed = req.schema.safeParse(info.structured);
-      if (!parsed.success) throw new AgentError(`Structured output did not match the contract: ${parsed.error.message}`, req.role, info.cost);
+      if (!parsed.success) throw new AgentError(`Structured output did not match the contract: ${parsed.error.message}`, req.role, costUsd, usage);
 
       return {
         output: parsed.data,
         sessionId: sessionID,
-        costUsd: info.cost ?? 0,
+        costUsd,
+        usage,
         turns: Math.max(1, parts.filter((p) => p.type === "step-finish").length),
         durationMs: Date.now() - started,
         denials,
@@ -161,6 +184,40 @@ export class OpenCodeAgentRunner implements AgentRunner {
     this.server = null;
     if (server) (await server.catch(() => null))?.close();
     await this.bridge.close();
+  }
+
+  /**
+   * Usage of every model step this prompt caused. One prompt can create
+   * several assistant messages, and a message's own `tokens` holds only its
+   * last step, so the step-finish parts of every new message are summed.
+   */
+  private async usageSince(
+    client: OpencodeClientLike,
+    sessionID: string,
+    directory: string,
+    since: number,
+    final: { info: OpencodeMessageInfo; parts: Array<{ type: string }> },
+  ): Promise<Usage> {
+    const listed = await client.session.messages?.({ sessionID, directory }).catch(() => undefined);
+    const messages = listed?.data?.filter((m) => m.info.role === "assistant" && (m.info.time?.created ?? 0) >= since) ?? [final];
+    const usage: Usage = {};
+    for (const m of messages.length ? messages : [final]) {
+      const key = m.info.providerID && m.info.modelID ? `${m.info.providerID}/${m.info.modelID}` : "opencode default";
+      const steps = m.parts.filter((p): p is OpencodeStepFinish => p.type === "step-finish");
+      const counted = steps.length ? steps : [{ type: "step-finish" as const, cost: m.info.cost, tokens: m.info.tokens }];
+      for (const s of counted) {
+        if (!s.tokens) continue;
+        addModel(usage, key, {
+          input: s.tokens.input,
+          output: s.tokens.output,
+          reasoning: s.tokens.reasoning,
+          cacheRead: s.tokens.cache.read,
+          cacheWrite: s.tokens.cache.write,
+          costUsd: s.cost ?? 0,
+        });
+      }
+    }
+    return usage;
   }
 
   /** Starts `opencode serve` once and begins dispatching its permission requests. */

@@ -20,6 +20,7 @@ import { distillTicket } from "../src/distill.js";
 import { readTicket } from "../src/ticket.js";
 import { loadSkills, ejectSkills } from "../src/skills.js";
 import { implementTicket, mergeReviews } from "../src/workflow.js";
+import { groupUsage, readUsageRecords } from "../src/usage.js";
 import { byTask, ScriptedRunner, sh, write } from "./helpers.js";
 
 function initRepo(dir: string, files: Record<string, string>) {
@@ -156,7 +157,18 @@ async function happyPath() {
   assert.equal(s.flowCommit, sh(s.worktree!, "rev-parse", "HEAD"));
   assert.equal(sh(repo, "status", "--porcelain"), "", "original checkout untouched");
   assert.equal(readFileSync(join(parent, "notify.log"), "utf8"), "AB-1:completed:1\n");
-  console.log("✓ single component: task worktree, ask, same-worker repair, exact commits, ledger, guards, cleanup");
+  // Token usage: 9 agent calls × (100 in, 10 cache write, 50 cache read, 20 out, 5 reasoning).
+  assert.deepEqual(
+    { ...s.usage.total },
+    { input: 900, cacheWrite: 90, cacheRead: 450, output: 180, reasoning: 45, costUsd: 0.09 },
+  );
+  assert.deepEqual(Object.keys(s.usage.byModel), ["scripted (claude)"]);
+  assert.equal(s.usage.byRuntime.claude!.input, 900);
+  const ends = readFileSync(join(s.runDir, "events.jsonl"), "utf8").split("\n").filter((l) => l.includes('"step.end"')).map((l) => JSON.parse(l));
+  assert.equal(ends.filter((e) => e.usage).length, 9, "every agent call logs its usage");
+  assert.deepEqual(ends.find((e) => e.step === "implement-T1").usage, { scripted: { input: 100, output: 20, cacheRead: 50, cacheWrite: 10, reasoning: 5, costUsd: 0.01 } });
+  assert.equal(JSON.parse(readFileSync(join(s.runDir, "summary.json"), "utf8")).usage.total.input, 900, "totals in summary.json");
+  console.log("✓ single component: task worktree, ask, same-worker repair, exact commits, ledger, guards, cleanup, token usage");
   return { repo, parent, config, s, ticket };
 }
 
@@ -305,7 +317,13 @@ async function distillReachesNextRun(ctx: Awaited<ReturnType<typeof happyPath>>)
   assert.equal(s2.status, "completed", s2.reason);
   assert.ok(next.systemPrompts.coder!.includes(guideline));
   assert.ok(!next.systemPrompts.review!.includes(guideline));
-  console.log("✓ human corrections become a guideline for the step that caused them, used on the next run");
+  // distill's tokens go to the ticket's own run log, so `usage --ticket-id AB-1` includes them.
+  const records = await readUsageRecords(join(s.runDir, ".."));
+  const ab1 = records.filter((r) => r.ticketId === "AB-1");
+  assert.equal(ab1.length, 10, "9 run calls + distill");
+  assert.ok(ab1.some((r) => r.step === "distill" && r.usage.scripted!.input === 100));
+  assert.deepEqual(groupUsage(ab1, "role").find((r) => r.key === "coder")!.calls, 2);
+  console.log("✓ human corrections become a guideline for the step that caused them, used on the next run; distill usage logged");
 }
 
 // ── Parallel: monorepo with backend and frontend ──────────────────────────

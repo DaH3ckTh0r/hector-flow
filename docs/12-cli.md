@@ -5,7 +5,7 @@ npm run flow -- <comando> [opciones]     # sin compilar, desde la carpeta de hec
 hector-flow <comando> [opciones]         # tras npm run build && npm link
 ```
 
-Comandos: `check`, `run`, `distill`, `clean`, `skills`, `start`, `status`, `approve`, `reject`, `requeue`, `memory`, `models`.
+Comandos: `check`, `run`, `distill`, `clean`, `skills`, `start`, `status`, `approve`, `reject`, `requeue`, `memory`, `models`, `usage`.
 
 Las rutas relativas de `--repo`, `--ticket` y `--config` se resuelven desde la carpeta **donde escribiste el comando**, también con `npm run flow` (que internamente cambia a la carpeta de hector-flow; se usa la variable `INIT_CWD` que npm define con la carpeta original). Las rutas con `~` las expande tu shell.
 
@@ -169,6 +169,23 @@ npm run flow -- models --repo <ruta> copilot
 ```
 
 Muestra el id, el multiplicador de *premium requests*, los niveles de esfuerzo admitidos y el nombre. Los modelos que la política de tu organización deshabilita aparecen marcados. Falla si Copilot no tiene sesión iniciada.
+
+## `usage`
+
+Consumo de tokens a partir de los logs de todas las ejecuciones (incluye `distill`). No llama a ningún modelo.
+
+```bash
+npm run flow -- usage --repo <ruta> [--ticket-id <ID>] [--by model|runtime|step|role|ticket|run|day] [--since AAAA-MM-DD] [--json]
+```
+
+| Opción | Descripción |
+|---|---|
+| `--by` | Cómo agrupar. Por defecto `model`. |
+| `--ticket-id` | Solo las ejecuciones de ese ticket. |
+| `--since` | Solo llamadas de esa fecha en adelante. |
+| `--json` | Salida en JSON (filas y total, con `totalTokens`). |
+
+Columnas: llamadas, entrada sin caché, caché escrita, caché leída, salida, razonamiento (ya incluido en salida), total y costo en USD cuando el runtime lo informa. Detalles y diferencias entre runtimes en [07-observabilidad.md](07-observabilidad.md#consumo-de-tokens).
 
 ## `memory`
 

@@ -2,6 +2,7 @@ import { Codex, type CodexOptions, type ThreadOptions, type ThreadItem, type Usa
 import type { z } from "zod";
 import type { FlowConfig } from "../config.js";
 import { toJsonSchema } from "../schemas.js";
+import type { Usage as TokenUsage } from "../usage.js";
 import { ToolBridge } from "../tool-bridge.js";
 import { AgentError, type AgentRequest, type AgentResult, type AgentRunner } from "./agent-runner.js";
 import { resolvedScope } from "./claude-runner.js";
@@ -72,6 +73,7 @@ export class CodexAgentRunner implements AgentRunner {
       const thread = req.resumeSessionId ? codex.resumeThread(req.resumeSessionId, options) : codex.startThread(options);
       const turn = await thread.run(codexPrompt(req, scope), { outputSchema: strictify(toJsonSchema(req.schema)) });
 
+      const usage = codexUsage(turn.usage, options.model);
       const failed = turn.items.find((i) => i.type === "error");
       let raw: unknown;
       try {
@@ -80,10 +82,12 @@ export class CodexAgentRunner implements AgentRunner {
         throw new AgentError(
           `Codex did not return JSON${failed && "message" in failed ? ` (${failed.message})` : ""}: ${turn.finalResponse.slice(0, 200)}`,
           req.role,
+          0,
+          usage,
         );
       }
       const parsed = req.schema.safeParse(raw);
-      if (!parsed.success) throw new AgentError(`Structured output did not match the contract: ${parsed.error.message}`, req.role);
+      if (!parsed.success) throw new AgentError(`Structured output did not match the contract: ${parsed.error.message}`, req.role, 0, usage);
 
       return {
         output: parsed.data,
@@ -92,6 +96,7 @@ export class CodexAgentRunner implements AgentRunner {
         turns: Math.max(1, turn.items.filter((i) => i.type === "command_execution" || i.type === "file_change" || i.type === "mcp_tool_call").length),
         durationMs: Date.now() - started,
         denials: [],
+        usage,
       };
     } catch (err) {
       if (err instanceof AgentError) throw err;
@@ -121,6 +126,25 @@ export class CodexAgentRunner implements AgentRunner {
     }
     return Object.keys(servers).length ? { mcp_servers: servers } : undefined;
   }
+}
+
+/**
+ * Codex reports OpenAI-style usage: input_tokens INCLUDES cached_input_tokens,
+ * and reasoning_output_tokens are part of output_tokens. The model is not in
+ * the event, so the requested one is used ("codex default" when unset).
+ */
+export function codexUsage(u: Usage | null, model: string | undefined): TokenUsage {
+  if (!u) return {};
+  return {
+    [model ?? "codex default"]: {
+      input: Math.max(0, u.input_tokens - u.cached_input_tokens),
+      output: u.output_tokens,
+      cacheRead: u.cached_input_tokens,
+      cacheWrite: u.cache_write_input_tokens ?? 0,
+      reasoning: u.reasoning_output_tokens ?? 0,
+      costUsd: 0,
+    },
+  };
 }
 
 /** Codex has no system prompt option: the step's instructions and its limits go first in the prompt. */

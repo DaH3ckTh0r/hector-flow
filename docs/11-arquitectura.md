@@ -19,6 +19,7 @@ src/
 ├── memory.ts              Memoria persistente: guardar, buscar (tf-idf), validar por ejecución
 ├── backlog.ts             Adaptadores de backlog: carpeta, GitHub Issues, Azure DevOps
 ├── loop.ts                Bucle continuo, estado, bloqueo, modos, fusión verificada, approve/reject/requeue
+├── usage.ts               Contadores de tokens normalizados, diferencias de sesiones retomadas, informes de usage
 ├── runtimes.ts            resolveRuntime (runtime/modelo/esfuerzo por paso), RouterRunner, createRunner
 ├── tool-bridge.ts         Servidor MCP HTTP local: ask y memoria para Codex y OpenCode
 ├── distill.ts             Comando distill
@@ -42,6 +43,7 @@ test/
 ├── helpers.ts             ScriptedRunner: un AgentRunner falso, determinista
 ├── runner-policy.ts       Reglas de permisos del runner real
 ├── runtimes.ts            Puente MCP (cliente MCP real), Codex, OpenCode y Copilot con SDK simulados, enrutamiento
+├── usage.ts               Tokens de cada runtime (SDK simulados) e informes
 ├── e2e.ts                 18 escenarios del flujo
 ├── loop.ts                Memoria, acceso MCP, adaptadores (HTTP simulado) y el bucle
 └── tutorial.ts            El tutorial de punta a punta
@@ -91,6 +93,7 @@ interface AgentResult<T> {
   turns: number;
   durationMs: number;
   denials: { tool: string; reason: string }[];
+  usage?: Record<string, TokenCounts>;  // tokens de ESTA llamada, por modelo
 }
 ```
 

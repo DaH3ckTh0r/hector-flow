@@ -12,6 +12,7 @@ import { readTicket } from "./ticket.js";
 import { approveTicket, loopStatus, rejectTicket, requeueTicket, runLoop, type LoopMode } from "./loop.js";
 import { MemoryStore, renderMemories } from "./memory.js";
 import { flowPaths, implementTicket } from "./workflow.js";
+import { addCounts, describeCounts, emptyCounts, fmtTokens, groupUsage, readUsageRecords, sumUsage, totalTokens, type UsageGroup } from "./usage.js";
 
 const USAGE = `hector-flow check   --repo <path> [--ticket <ticket.md>] [--no-commands] [--config <path>]
 hector-flow run     --repo <path> --ticket <ticket.md>                    [--config <path>]
@@ -25,6 +26,7 @@ hector-flow reject  --repo <path> <ID> [--reason <text>]
 hector-flow requeue --repo <path> <ID>
 hector-flow memory  --repo <path> [list [--all] | search <words…> | forget <id…>]
 hector-flow models  --repo <path> copilot                                  [--config <path>]
+hector-flow usage   --repo <path> [--ticket-id <ID>] [--by model|runtime|step|role|ticket|run|day] [--since YYYY-MM-DD] [--json]
 
   check    Validates config, repos, each component's commands and the ticket. No model calls.
   run      Implements the ticket: worktrees per task, branches hector/<ID> in every touched repo.
@@ -42,6 +44,7 @@ hector-flow models  --repo <path> copilot                                  [--co
   requeue  Cleans a ticket and forgets its state so the loop runs it again.
   memory   Lists, searches or removes entries of the repo's persistent memory.
   models   Lists the model ids a runtime accepts (currently: copilot). No model calls.
+  usage    Token consumption (input, cache write/read, output, reasoning, cost) from the run logs.
 
   --repo         Primary repository (where hector-flow.config.json lives)
   --ticket       Markdown ticket with '# ID: title' and '## Acceptance criteria'
@@ -53,11 +56,14 @@ hector-flow models  --repo <path> copilot                                  [--co
   --max          start: stop after this many tickets
   --reason       reject: why (reported back to the backlog)
   --all          memory list: include provisional entries
+  --by           usage: how to group (default model)
+  --since        usage: only calls on or after this date
+  --json         usage: machine-readable output
 
 Exit codes: 0 completed/ok · 3 needs_human · 1 failed · 2 usage error
 `;
 
-const COMMANDS = ["check", "run", "distill", "clean", "skills", "start", "status", "approve", "reject", "requeue", "memory", "models"] as const;
+const COMMANDS = ["check", "run", "distill", "clean", "skills", "start", "status", "approve", "reject", "requeue", "memory", "models", "usage"] as const;
 type Command = (typeof COMMANDS)[number];
 
 async function main(): Promise<number> {
@@ -74,6 +80,9 @@ async function main(): Promise<number> {
       max: { type: "string" },
       reason: { type: "string" },
       all: { type: "boolean" },
+      by: { type: "string" },
+      since: { type: "string" },
+      json: { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -168,6 +177,43 @@ async function main(): Promise<number> {
     return 0;
   }
 
+  if (command === "usage") {
+    const by = (values.by ?? "model") as UsageGroup;
+    if (!["model", "runtime", "step", "role", "ticket", "run", "day"].includes(by)) {
+      return (console.log("--by must be model, runtime, step, role, ticket, run or day"), 2);
+    }
+    const primaryRoot = await git(repo, "rev-parse", "--show-toplevel");
+    let records = await readUsageRecords(flowPaths(primaryRoot, config).runs);
+    if (values["ticket-id"]) records = records.filter((r) => r.ticketId === values["ticket-id"]);
+    if (values.since) records = records.filter((r) => r.ts.slice(0, 10) >= values.since!);
+    const rows = groupUsage(records, by);
+    const total = rows.reduce((acc, r) => addCounts(acc, r), emptyCounts());
+    if (values.json) {
+      console.log(JSON.stringify({ by, calls: records.length, total: { ...total, totalTokens: totalTokens(total) }, rows: rows.map((r) => ({ ...r, totalTokens: totalTokens(r) })) }, null, 2));
+      return 0;
+    }
+    if (!rows.length) return (console.log("No token usage recorded yet for that selection."), 0);
+    const header = [by, "calls", "input", "cache write", "cache read", "output", "reasoning", "total", "cost $"];
+    const lines = [...rows, { key: "TOTAL", calls: records.length, ...total }].map((r) => [
+      r.key,
+      String(r.calls),
+      fmtTokens(r.input),
+      fmtTokens(r.cacheWrite),
+      fmtTokens(r.cacheRead),
+      fmtTokens(r.output),
+      fmtTokens(r.reasoning),
+      fmtTokens(totalTokens(r)),
+      r.costUsd ? r.costUsd.toFixed(4) : "-",
+    ]);
+    const widths = header.map((h, i) => Math.max(h.length, ...lines.map((l) => l[i]!.length)));
+    const fmt = (cols: string[]) => cols.map((c, i) => (i === 0 ? c.padEnd(widths[i]!) : c.padStart(widths[i]!))).join("  ");
+    console.log(fmt(header));
+    for (const l of lines) console.log(fmt(l));
+    const extras = Object.entries(total.extra ?? {});
+    if (extras.length) console.log(`\n${extras.map(([k, v]) => `${k}: ${v}`).join("   ")}`);
+    return 0;
+  }
+
   if (command === "models") {
     const which = positionals[1] ?? "copilot";
     if (which !== "copilot") return (console.log("Usage: hector-flow models --repo <path> copilot"), 2);
@@ -251,6 +297,7 @@ async function main(): Promise<number> {
       }
       console.log(`${res.added} new guideline(s):`);
       for (const l of res.lessons) console.log(`- [${l.role}] ${l.guideline}`);
+      console.log(`\ntokens   ${describeCounts(sumUsage(res.usage))}${res.costUsd ? `   cost $${res.costUsd.toFixed(4)}` : ""}`);
       return 0;
     }
 
@@ -266,6 +313,8 @@ async function main(): Promise<number> {
     console.log(`tasks    ${summary.tasks} (max ${summary.maxConcurrentWorkers} in parallel)`);
     console.log(`repairs  ${summary.repairAttempts}   review rounds ${summary.reviewRounds}   questions ${summary.questionsAsked}`);
     console.log(`cost     $${summary.costUsd.toFixed(4)}   time ${(summary.durationMs / 1000).toFixed(0)}s`);
+    console.log(`tokens   ${describeCounts(summary.usage.total)}`);
+    for (const [model, c] of Object.entries(summary.usage.byModel)) console.log(`         ${model}: ${describeCounts(c)}`);
     console.log(`log      ${summary.runDir}`);
     if (summary.reason) console.log(`\n${summary.reason}`);
     if (summary.openAssumptions.length) {
