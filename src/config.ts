@@ -18,7 +18,7 @@ export type Role = z.infer<typeof RoleSchema>;
 export const EffortSchema = z.enum(["low", "medium", "high", "xhigh", "max"]);
 export type Effort = z.infer<typeof EffortSchema>;
 
-export const RuntimeNameSchema = z.enum(["claude", "codex", "opencode", "copilot"]);
+export const RuntimeNameSchema = z.enum(["claude", "codex", "opencode", "copilot", "pi"]);
 export type RuntimeName = z.infer<typeof RuntimeNameSchema>;
 
 /** A step's runtime: just a name, or a name with the model and effort to use there. */
@@ -151,6 +151,16 @@ export const ConfigSchema = z.object({
           timeoutMinutes: z.number().positive().default(30),
           /** Path to a Copilot CLI instead of the runtime bundled with the SDK. */
           path: z.string().optional(),
+        })
+        .prefault({}),
+      pi: z
+        .object({
+          /** Default model for pi steps, as "provider/model" (e.g. "anthropic/claude-sonnet-5-5"). */
+          model: z.string().regex(/^[^/]+\/.+$/, 'use "provider/model"').optional(),
+          /** pi thinking level: low … max. */
+          effort: EffortSchema.optional(),
+          /** pi's config folder (auth.json, models.json). Default ~/.pi/agent. */
+          agentDir: z.string().optional(),
         })
         .prefault({}),
     })

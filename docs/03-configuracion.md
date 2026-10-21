@@ -33,7 +33,7 @@ Invalid config at /Users/tu/mi-repo/hector-flow.config.json:
   "claudeSkills": { "<rol>": ["<skill>"] },
   "pluginDirs": [],
   "review": { "judges": [{ "name": "reviewer" }] },
-  "runtime": { "default": "claude", "steps": { "<rol>": "codex" }, "codex": {}, "opencode": {}, "copilot": {} },
+  "runtime": { "default": "claude", "steps": { "<rol>": "codex" }, "codex": {}, "opencode": {}, "copilot": {}, "pi": {} },
 
   // Seguridad
   "readDenyPaths": ["**/.env", "…"],
@@ -222,7 +222,7 @@ Carpetas de plugins locales de Claude Code, relativas al repo principal. Se carg
 | `name` | texto (minúsculas, dígitos, guiones) | Nombre del juez. Aparece en los hallazgos y en los artefactos. |
 | `model` | texto, opcional | Modelo de este juez. Por defecto, el del rol `review`. Usar modelos distintos da opiniones más independientes. |
 | `effort` | esfuerzo, opcional | Esfuerzo de este juez. |
-| `runtime` | `claude` \| `codex` \| `opencode` \| `copilot`, opcional | Runtime de este juez (por defecto, el del paso `review`). Su `model` es un modelo de ese runtime. Ver [16-runtimes.md](16-runtimes.md). |
+| `runtime` | `claude` \| `codex` \| `opencode` \| `copilot` \| `pi`, opcional | Runtime de este juez (por defecto, el del paso `review`). Su `model` es un modelo de ese runtime. Ver [16-runtimes.md](16-runtimes.md). |
 | `focus` | texto, opcional | Instrucciones adicionales solo para este juez, enviadas en un bloque `<review_focus>`. |
 
 Por defecto hay un único juez (`reviewer`) y la revisión funciona como siempre. Con dos o más:
@@ -249,7 +249,7 @@ Más en [05-flujo.md](05-flujo.md#7-review--revisión).
 | Campo | Por defecto | Descripción |
 |---|---|---|
 | `default` | `"claude"` | Runtime de los pasos que no están en `steps`. |
-| `steps.<rol>` | — | `"claude"`, `"codex"`, `"opencode"`, `"copilot"`, o `{ "use", "model"?, "effort"? }`. |
+| `steps.<rol>` | — | `"claude"`, `"codex"`, `"opencode"`, `"copilot"`, `"pi"`, o `{ "use", "model"?, "effort"? }`. |
 | `codex.model`, `codex.effort` | defaults de Codex | Modelo y esfuerzo de los pasos en Codex. |
 | `codex.networkAccess` | `false` | Red para los comandos dentro del sandbox. |
 | `codex.path` | binario del SDK | Otro binario `codex`. |
@@ -259,8 +259,10 @@ Más en [05-flujo.md](05-flujo.md#7-review--revisión).
 | `copilot.tokenEnv` | — | Variable con un token de GitHub (fine-grained PAT con "Copilot Requests"). Sin ella: `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, `copilot login` o `gh auth token`. |
 | `copilot.timeoutMinutes` | `30` | Tiempo máximo de un paso. |
 | `copilot.path` | runtime del SDK | Otra instalación de Copilot CLI. |
+| `pi.model`, `pi.effort` | primero con credenciales | `"proveedor/modelo"` del catálogo de pi (`hector-flow models … pi`) y nivel de razonamiento. |
+| `pi.agentDir` | `~/.pi/agent` | De dónde lee pi sus credenciales (`auth.json`) y modelos propios (`models.json`). |
 
-Codex **no aplica** `readDenyPaths` ni `allowedCommands` (aísla con su sandbox); OpenCode y Copilot sí, igual que Claude. Guía completa, tabla de aislamiento y recetas: [16-runtimes.md](16-runtimes.md).
+Codex **no aplica** `readDenyPaths` ni `allowedCommands` (aísla con su sandbox); OpenCode, Copilot y pi sí, igual que Claude. Guía completa, tabla de aislamiento y recetas: [16-runtimes.md](16-runtimes.md).
 
 ### `readDenyPaths` — string[], por defecto una lista de archivos de secretos
 

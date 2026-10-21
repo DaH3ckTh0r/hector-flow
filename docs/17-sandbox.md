@@ -83,6 +83,7 @@ Solo entran al sandbox las variables que estén definidas en tu terminal **y** l
 | `ANTHROPIC_API_KEY` o `CLAUDE_CODE_OAUTH_TOKEN` | Pasos en Claude (la sesión de `claude` de tu `$HOME` no entra: usa una clave) |
 | `OPENAI_API_KEY` / `CODEX_API_KEY` | Pasos en Codex |
 | `COPILOT_GITHUB_TOKEN` | Pasos en Copilot (fine-grained PAT con "Copilot Requests") |
+| La variable de tu proveedor (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`…) | Pasos en pi (su `~/.pi/agent/auth.json` no entra). Si usas otro proveedor, añade su variable a `compose.yaml` y su API al allowlist |
 | `HECTOR_BACKLOG_TOKEN` | El backlog de GitHub o Azure DevOps: pon `"tokenEnv": "HECTOR_BACKLOG_TOKEN"` en `backlog` |
 
 Recomendaciones:

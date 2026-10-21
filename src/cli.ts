@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
 import { resolve } from "node:path";
-import { listCopilotModels, preflight } from "./check.js";
+import { listCopilotModels, listPiModels, preflight } from "./check.js";
 import { cleanTicket } from "./clean.js";
 import { loadConfig, RoleSchema, type Role } from "./config.js";
 import { ejectSkills, loadSkills, resolveStep } from "./skills.js";
@@ -25,7 +25,7 @@ hector-flow approve --repo <path> <ID>
 hector-flow reject  --repo <path> <ID> [--reason <text>]
 hector-flow requeue --repo <path> <ID>
 hector-flow memory  --repo <path> [list [--all] | search <words…> | forget <id…>]
-hector-flow models  --repo <path> copilot                                  [--config <path>]
+hector-flow models  --repo <path> copilot|pi                               [--config <path>]
 hector-flow usage   --repo <path> [--ticket-id <ID>] [--by model|runtime|step|role|ticket|run|day] [--since YYYY-MM-DD] [--json]
 
   check    Validates config, repos, each component's commands and the ticket. No model calls.
@@ -43,7 +43,7 @@ hector-flow usage   --repo <path> [--ticket-id <ID>] [--by model|runtime|step|ro
   reject   Discards a ticket's branches and marks it rejected.
   requeue  Cleans a ticket and forgets its state so the loop runs it again.
   memory   Lists, searches or removes entries of the repo's persistent memory.
-  models   Lists the model ids a runtime accepts (currently: copilot). No model calls.
+  models   Lists the model ids a runtime accepts (copilot, pi). No model calls.
   usage    Token consumption (input, cache write/read, output, reasoning, cost) from the run logs.
 
   --repo         Primary repository (where hector-flow.config.json lives)
@@ -216,7 +216,16 @@ async function main(): Promise<number> {
 
   if (command === "models") {
     const which = positionals[1] ?? "copilot";
-    if (which !== "copilot") return (console.log("Usage: hector-flow models --repo <path> copilot"), 2);
+    if (which === "pi") {
+      const models = await listPiModels(config);
+      if (!models.length) return (console.log("pi has no models with credentials. Run `pi /login` or export a provider API key."), 1);
+      const width = Math.max(4, ...models.map((m) => m.id.length));
+      console.log(`${"id".padEnd(width)}  reasoning  name`);
+      for (const m of models) console.log(`${m.id.padEnd(width)}  ${(m.reasoning ? "yes" : "-").padEnd(9)}  ${m.name}`);
+      console.log(`\nUse an id in runtime.pi.model, runtime.steps.<role>.model or a judge's model.`);
+      return 0;
+    }
+    if (which !== "copilot") return (console.log("Usage: hector-flow models --repo <path> copilot|pi"), 2);
     const models = await listCopilotModels(config);
     const width = Math.max(4, ...models.map((m) => m.id.length));
     console.log(`${"id".padEnd(width)}  premium×  efforts            name`);

@@ -169,6 +169,7 @@ export async function checkRuntimes(
   config: FlowConfig,
   which: (bin: string) => Promise<boolean> = onPath,
   copilotAuth: (config: FlowConfig) => Promise<{ ok: boolean; message: string }> = copilotSignedIn,
+  piProbe: (config: FlowConfig, models: string[]) => Promise<PiProbe> = probePi,
 ): Promise<CheckLine[]> {
   const lines: CheckLine[] = [];
   const used = runtimesInUse(config);
@@ -205,6 +206,23 @@ export async function checkRuntimes(
       lines.push({ ok: existsSync(config.runtime.copilot.path), label: `copilot CLI ${config.runtime.copilot.path} exists` });
     }
   }
+  if (used.has("pi")) {
+    // Every pi model the config names: runtime.pi.model, step objects and judges on pi.
+    const named = new Set<string>();
+    if (config.runtime.pi.model) named.add(config.runtime.pi.model);
+    for (const entry of Object.values(config.runtime.steps)) if (typeof entry === "object" && entry.use === "pi" && entry.model) named.add(entry.model);
+    for (const j of config.review.judges) if (j.runtime === "pi" && j.model) named.add(j.model);
+    if (!named.size) lines.push({ ok: true, warn: true, label: "runtime.pi.model is not set: pi will use the first model it has credentials for" });
+    const probe = await piProbe(config, [...named]);
+    if (probe.error) lines.push({ ok: false, label: "pi model runtime", detail: probe.error });
+    for (const m of probe.models) {
+      lines.push(
+        !m.known
+          ? { ok: false, label: `pi knows the model ${m.id}`, detail: "Use \"provider/model\". `hector-flow models --repo <repo> pi` lists them." }
+          : { ok: m.auth, label: `pi has credentials for ${m.id}`, detail: m.auth ? undefined : `Run \`pi /login\` or export the provider's API key variable (e.g. ANTHROPIC_API_KEY).` },
+      );
+    }
+  }
   if (used.has("opencode")) {
     const found = await which("opencode");
     lines.push({
@@ -215,6 +233,40 @@ export async function checkRuntimes(
     if (!config.runtime.opencode.model) lines.push({ ok: true, warn: true, label: "runtime.opencode.model is not set: OpenCode will use its own default model" });
   }
   return lines;
+}
+
+export interface PiProbe {
+  error?: string;
+  models: Array<{ id: string; known: boolean; auth: boolean }>;
+}
+
+/** Loads pi's model runtime (no network, no model call) and checks each model and its provider's credentials. */
+async function probePi(config: FlowConfig, models: string[]): Promise<PiProbe> {
+  try {
+    const rt = await piModelRuntime(config);
+    return {
+      models: models.map((id) => {
+        const slash = id.indexOf("/");
+        const provider = id.slice(0, slash);
+        const known = slash > 0 && !!rt.getModel(provider, id.slice(slash + 1));
+        return { id, known, auth: known && rt.hasConfiguredAuth(provider) };
+      }),
+    };
+  } catch (err) {
+    return { error: (err as Error).message, models: [] };
+  }
+}
+
+async function piModelRuntime(config: FlowConfig) {
+  const { ModelRuntime } = await import("@earendil-works/pi-coding-agent");
+  const dir = config.runtime.pi.agentDir;
+  return ModelRuntime.create(dir ? { authPath: `${dir}/auth.json`, modelsPath: `${dir}/models.json` } : {});
+}
+
+/** pi models usable right now (credentials configured), as "provider/model". */
+export async function listPiModels(config: FlowConfig): Promise<Array<{ id: string; name: string; reasoning: boolean }>> {
+  const rt = await piModelRuntime(config);
+  return (await rt.getAvailable()).map((m) => ({ id: `${m.provider}/${m.id}`, name: m.name ?? m.id, reasoning: !!m.reasoning }));
 }
 
 /** Copilot model ids this account can use (no model call), for runtime.copilot.model and judges. */

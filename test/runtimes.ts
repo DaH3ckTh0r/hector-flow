@@ -544,6 +544,20 @@ async function routing() {
   assert.deepEqual(closed.sort(), ["claude", "codex"], "close() reaches every runner used");
 
   const lines = await checkRuntimes(cfg, async () => false, async () => ({ ok: false, message: "Not authenticated. Run `copilot login`." }));
+  const piCfg = config({
+    runtime: { steps: { coder: "pi", review: { use: "pi", model: "anthropic/nope" } }, pi: { model: "anthropic/claude-sonnet-5-5" } },
+    review: { judges: [{ name: "a" }, { name: "b", runtime: "pi", model: "openai/gpt-5.5" }] },
+  });
+  const probed: string[][] = [];
+  const piLines = await checkRuntimes(piCfg, async () => true, async () => ({ ok: true, message: "" }), async (_c, models) => {
+    probed.push(models);
+    return { models: models.map((id) => ({ id, known: id !== "anthropic/nope", auth: id.startsWith("anthropic/") })) };
+  });
+  assert.deepEqual(probed[0]!.sort(), ["anthropic/claude-sonnet-5-5", "anthropic/nope", "openai/gpt-5.5"], "every pi model the config names");
+  const piText = piLines.map((l) => `${l.ok ? "ok" : "FAIL"} ${l.label}`).join("\n");
+  assert.match(piText, /ok pi has credentials for anthropic\/claude-sonnet-5-5/);
+  assert.match(piText, /FAIL pi knows the model anthropic\/nope/);
+  assert.match(piText, /FAIL pi has credentials for openai\/gpt-5.5/);
   const text = lines.map((l) => `${l.ok ? "ok" : "FAIL"}${l.warn ? "/warn" : ""} ${l.label}`).join("\n");
   assert.match(text, /ok runtimes: enrich=claude plan=claude testAuthor=claude coder=codex .*review=opencode/);
   assert.match(text, /ok\/warn codex steps: the read deny-list and the command allowlist are not enforced/);

@@ -40,7 +40,7 @@ Comprueba, en orden:
 6. Qué skills de pasos están personalizadas, y sus avisos (⚠).
 7. Que existen las carpetas de `pluginDirs`, y cuántos jueces revisan si hay más de uno.
 8. Qué variables con aspecto de credencial se quitarán del entorno de los comandos de build/test (`commandEnv`), si se está ejecutando dentro del sandbox y con qué proxy (✖ si falta), y un aviso (⚠) si no hay sandbox y el modo es `auto`, hay pasos en Codex o los tickets vienen de GitHub o Azure DevOps.
-9. Si algún paso usa otro runtime: qué runtime ejecuta cada paso, que `opencode` está en el PATH (✖ si no), que Copilot tiene sesión iniciada (✖ si no; inicia su runtime unos instantes, sin llamar a ningún modelo), que existen `runtime.codex.path` / `runtime.copilot.path` si los defines, y avisos (⚠) de lo que Codex no aplica y de servidores SSE que Codex no soporta. Ver [16-runtimes.md](16-runtimes.md).
+9. Si algún paso usa otro runtime: qué runtime ejecuta cada paso, que `opencode` está en el PATH (✖ si no), que Copilot tiene sesión iniciada (✖ si no; inicia su runtime unos instantes, sin llamar a ningún modelo), que cada modelo de pi existe y tiene credenciales, que existen `runtime.codex.path` / `runtime.copilot.path` si los defines, y avisos (⚠) de lo que Codex no aplica y de servidores SSE que Codex no soporta. Ver [16-runtimes.md](16-runtimes.md).
 10. Que el ticket se puede leer y tiene criterios.
 
 Símbolos: `✔` correcto, `⚠` aviso, `✖` error. Termina con `Ready to run.` (código 0) o `N check(s) failed.` (código 1).
@@ -163,10 +163,11 @@ El ID también se puede pasar con `--ticket-id`.
 
 ## `models`
 
-Lista los ids de modelo que acepta un runtime, para usarlos en `runtime.<runtime>.model`, en `runtime.steps.<rol>.model` o en el `model` de un juez. Por ahora solo `copilot`. No llama a ningún modelo.
+Lista los ids de modelo que acepta un runtime, para usarlos en `runtime.<runtime>.model`, en `runtime.steps.<rol>.model` o en el `model` de un juez: `copilot` o `pi`. No llama a ningún modelo.
 
 ```bash
 npm run flow -- models --repo <ruta> copilot
+npm run flow -- models --repo <ruta> pi        # solo los modelos con credenciales, como "proveedor/modelo"
 ```
 
 Muestra el id, el multiplicador de *premium requests*, los niveles de esfuerzo admitidos y el nombre. Los modelos que la política de tu organización deshabilita aparecen marcados. Falla si Copilot no tiene sesión iniciada.

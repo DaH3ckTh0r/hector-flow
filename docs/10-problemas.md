@@ -102,7 +102,7 @@ El flujo se detiene a propósito para que decidas tú. Los worktrees de tarea se
 | `N open assumption(s): review before merging` | Modo `auto` con supuestos abiertos. | Revisa los supuestos y `approve`, o desactiva `autoMergeRequiresNoAssumptions`. |
 | `⚠ could not report back to …` | No se pudo comentar en GitHub/ADO. | Revisa el permiso de escritura del token; el bucle sigue igualmente. |
 
-## Runtimes (Codex, OpenCode, Copilot)
+## Runtimes (Codex, OpenCode, Copilot, pi)
 
 | Mensaje | Causa | Solución |
 |---|---|---|
@@ -117,6 +117,11 @@ El flujo se detiene a propósito para que decidas tú. Los worktrees de tarea se
 | `Copilot failed: … model …` | El id de modelo no existe o tu plan no lo incluye. | `hector-flow models --repo <repo> copilot` y usa uno de esos ids. |
 | `denied write — Your organization's Copilot policy requires a person…` | La política gestionada de Copilot exige aprobar esa acción a mano. | Pide que la política permita esa acción en Copilot CLI, o envía ese paso a otro runtime. |
 | `Copilot finished without a final message` | El paso agotó `runtime.copilot.timeoutMinutes` o la sesión falló. | Mira el error que sigue al mensaje; sube `timeoutMinutes` si el paso es largo. |
+| `✖ pi has credentials for <modelo>` | pi no tiene clave para ese proveedor. | `pi` y `/login`, o exporta la variable del proveedor (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`…). En el sandbox, solo variables. |
+| `✖ pi knows the model …` / `pi does not know the model …` | El id no está en el catálogo de pi, o falta el proveedor. | `hector-flow models --repo <repo> pi` y usa `"proveedor/modelo"`. |
+| `pi finished without calling submit_result` | El modelo terminó con texto en vez de llamar a la herramienta de resultado. | Reintenta; usa un modelo con buen uso de herramientas, o sube `effort`. |
+| `pi session … is not open in this run` | Se intentó retomar una sesión de pi de otra ejecución. | Las sesiones de pi viven en memoria durante la ejecución; no ocurre en el flujo normal. |
+| Un paso en pi no ve un servidor MCP | Los pasos en pi no cargan MCP. | Ejecuta ese paso en Claude, OpenCode, Copilot o Codex. |
 | `⚠ codex cannot use SSE MCP servers` | Codex solo soporta servidores stdio y HTTP. | Usa la variante HTTP del servidor, o deja ese paso en Claude u OpenCode. |
 | Un juez en otro runtime usa un modelo de Claude por error | `models.review` o el front-matter nombran modelos de Claude y no se aplican fuera de Claude. | Define `model` en el juez o en `runtime.<nombre>.model`. |
 

@@ -19,7 +19,7 @@ hector-flow deja que agentes de IA editen código y ejecuten comandos sin pedir 
 
 ### Con otros runtimes
 
-Todo lo anterior describe a Claude. **OpenCode** y **GitHub Copilot** aplican las mismas reglas: cada herramienta pide permiso y el flujo responde con `decide()` (en Copilot, además, un gancho revisa las lecturas que no piden permiso). **Codex** no permite aprobar cada herramienta; el flujo usa su sandbox del sistema operativo (solo lectura, o escritura limitada a la carpeta del componente, sin red) y las revisiones de git de después de cada paso, pero **no puede aplicar `readDenyPaths`, las carpetas legibles ni `allowedCommands`**. Tabla completa en [16-runtimes.md](16-runtimes.md#aislamiento-qué-protege-cada-runtime).
+Todo lo anterior describe a Claude. **OpenCode**, **GitHub Copilot** y **pi** aplican las mismas reglas: cada herramienta pide permiso y el flujo responde con `decide()` (en Copilot, además, un gancho revisa las lecturas que no piden permiso; en pi, un manejador `tool_call` bloquea cualquier herramienta antes de ejecutarla, y no se cargan extensiones del usuario ni del repo). **Codex** no permite aprobar cada herramienta; el flujo usa su sandbox del sistema operativo (solo lectura, o escritura limitada a la carpeta del componente, sin red) y las revisiones de git de después de cada paso, pero **no puede aplicar `readDenyPaths`, las carpetas legibles ni `allowedCommands`**. Tabla completa en [16-runtimes.md](16-runtimes.md#aislamiento-qué-protege-cada-runtime).
 
 ### Sandbox
 

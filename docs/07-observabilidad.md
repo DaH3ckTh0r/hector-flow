@@ -194,6 +194,7 @@ Las llamadas fallidas también se registran, con lo que alcanzaron a gastar. `di
 | Claude | `modelUsage` del resultado del Agent SDK, por modelo | Incluye subagentes y llamadas internas. Al **retomar** una sesión, el SDK devuelve los totales acumulados de toda la sesión; el flujo resta lo ya contado, así que cada llamada (y su `costUsd`) cuenta solo sus turnos nuevos. |
 | Codex | `usage` del turno | OpenAI incluye los tokens cacheados dentro de `input_tokens`; el flujo los separa (`input = input_tokens − cached_input_tokens`). No informa el modelo: se usa el configurado, o `codex default`. Sin USD. |
 | OpenCode | Partes `step-finish` de todos los mensajes que generó el prompt | Se suman todos los pasos, no solo el último mensaje. `input` ya excluye la caché. USD según OpenCode. |
+| pi | El `usage` de cada mensaje del asistente | Ya normalizado por pi (`input` sin caché). USD según los precios de su catálogo. |
 | Copilot | Un evento `assistant.usage` por llamada al modelo | Se suman por modelo. Copilot no documenta si su `inputTokens` incluye los tokens leídos de caché: se guarda tal cual, así que el total puede contarlos dos veces. Sin USD; `extra.nanoAiu` y `extra.billingMultiplier` son sus unidades de facturación. |
 
 Son las cifras que informa cada runtime: sirven para comparar pasos, modelos y tickets, pero no sustituyen la factura del proveedor.

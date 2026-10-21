@@ -10,6 +10,7 @@
 | Acceso a Claude | Claude Code con sesión iniciada, o `ANTHROPIC_API_KEY` | `claude --version` y abrir `claude` una vez |
 | Codex (opcional) | Sesión de Codex (`npx codex login`) u `OPENAI_API_KEY`; el binario viene con el SDK | Solo si algún paso usa `runtime: codex` |
 | GitHub Copilot (opcional) | Suscripción de Copilot con Copilot CLI; `copilot login` (`npm i -g @github/copilot`) o un fine-grained PAT con "Copilot Requests". El runtime viene con el SDK | Solo si algún paso usa `runtime: copilot`; `check` lo verifica |
+| pi (opcional) | Viene como dependencia; necesita credenciales del proveedor (`pi` → `/login`, o su variable de API key) | Solo si algún paso usa `runtime: pi`; `check` lo verifica |
 | OpenCode (opcional) | `opencode` en el PATH (`npm i -g opencode-ai`) con un proveedor configurado | `opencode --version`; solo si algún paso usa `runtime: opencode` |
 | Sistema operativo | macOS o Linux. En Windows, usa WSL2 (no está probado en Windows nativo). | |
 
@@ -39,15 +40,16 @@ npm run typecheck   # compila sin errores
 npm test            # ~1 minuto, sin llamadas al modelo
 ```
 
-`npm test` ejecuta siete suites:
+`npm test` ejecuta ocho suites:
 
 1. `test/runner-policy.ts`: las reglas de permisos de los agentes.
 2. `test/runtimes.ts`: el puente MCP (con un cliente MCP real) y los runtimes Codex, OpenCode y Copilot con SDK simulados.
-3. `test/usage.ts`: el consumo de tokens de cada runtime y los informes de `usage`.
-4. `test/sandbox.ts`: el proxy de salida del sandbox (con sockets reales) y la limpieza de credenciales de los comandos.
-5. `test/e2e.ts`: 18 escenarios del flujo con un runner simulado.
-6. `test/loop.ts`: memoria, acceso MCP, adaptadores de backlog (con HTTP simulado) y el bucle.
-7. `test/tutorial.ts`: el tutorial completo, de punta a punta.
+3. `test/pi.ts`: el runtime pi con una sesión real de pi y su modelo simulado.
+4. `test/usage.ts`: el consumo de tokens de cada runtime y los informes de `usage`.
+5. `test/sandbox.ts`: el proxy de salida del sandbox (con sockets reales) y la limpieza de credenciales de los comandos.
+6. `test/e2e.ts`: 18 escenarios del flujo con un runner simulado.
+7. `test/loop.ts`: memoria, acceso MCP, adaptadores de backlog (con HTTP simulado) y el bucle.
+8. `test/tutorial.ts`: el tutorial completo, de punta a punta.
 
 Debe terminar con `tutorial checks passed`.
 
