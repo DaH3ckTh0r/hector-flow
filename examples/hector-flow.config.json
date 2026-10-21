@@ -1,0 +1,48 @@
+{
+  "buildCommand": "dotnet build --nologo -v q",
+  "testCommand": "dotnet test --nologo -v q",
+  "lintCommand": "dotnet format --verify-no-changes",
+  "lockedPaths": ["tests/**", "**/*.Tests/**"],
+  "allowedCommands": [
+    "dotnet build",
+    "dotnet test",
+    "dotnet restore",
+    "dotnet format",
+    "git status",
+    "git diff"
+  ],
+  "models": {
+    "enrich": "sonnet",
+    "plan": "opus",
+    "testAuthor": "sonnet",
+    "coder": "sonnet",
+    "diagnose": "opus",
+    "review": "opus",
+    "qaPlan": "haiku",
+    "distill": "opus",
+    "lead": "sonnet"
+  },
+  "efforts": {
+    "enrich": "medium",
+    "plan": "high",
+    "testAuthor": "medium",
+    "coder": "medium",
+    "diagnose": "high",
+    "review": "high",
+    "qaPlan": "low",
+    "distill": "high",
+    "lead": "medium"
+  },
+  "policy": {
+    "repairAttempts": 4,
+    "sameWorkerRetries": 2,
+    "maxQuestions": 10,
+    "undeclaredFiles": "revert",
+    "reviewRounds": 1,
+    "maxTurnsPerAgent": 40,
+    "maxBudgetUsdPerAgent": 2
+  },
+  "notifyCommand": "curl -s -H 'Content-Type: application/json' -d \"{\\\"text\\\":\\\"hector-flow $HECTOR_TICKET: $HECTOR_STATUS\\\"}\" \"$TEAMS_WEBHOOK_URL\"",
+  "workspacesDir": ".hector-workspaces",
+  "loadProjectSettings": true
+}

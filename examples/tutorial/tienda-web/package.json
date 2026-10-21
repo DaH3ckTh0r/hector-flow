@@ -1,0 +1,14 @@
+{
+  "name": "tienda-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Vista del carrito de la tienda de ejemplo del tutorial de hector-flow",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

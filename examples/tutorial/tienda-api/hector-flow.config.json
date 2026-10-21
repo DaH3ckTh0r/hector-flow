@@ -1,0 +1,49 @@
+{
+  "components": {
+    "api": {
+      "description": "API HTTP del carrito (Node, ESM). Lógica en src/cart.js, enrutador puro en src/routes.js. Importes en centavos.",
+      "repo": ".",
+      "path": ".",
+      "buildCommand": "npm run build",
+      "testCommand": "npm test",
+      "lockedPaths": ["test/**"],
+      "allowedCommands": ["npm test", "npm run build", "node --test"]
+    },
+    "web": {
+      "description": "Vista del carrito (Node, ESM). renderCart en src/cart-view.js convierte la respuesta de la API en líneas de texto.",
+      "repo": "../tienda-web",
+      "path": ".",
+      "buildCommand": "npm run build",
+      "testCommand": "npm test",
+      "lockedPaths": ["test/**"],
+      "allowedCommands": ["npm test", "npm run build", "node --test"]
+    }
+  },
+  "models": {
+    "enrich": "sonnet",
+    "plan": "opus",
+    "testAuthor": "sonnet",
+    "coder": "sonnet",
+    "diagnose": "opus",
+    "review": "sonnet",
+    "qaPlan": "haiku",
+    "distill": "opus",
+    "lead": "sonnet"
+  },
+  "efforts": {
+    "plan": "high",
+    "diagnose": "high"
+  },
+  "policy": {
+    "maxParallel": 2,
+    "repairAttempts": 4,
+    "sameWorkerRetries": 2,
+    "maxQuestions": 10,
+    "undeclaredFiles": "revert",
+    "reviewRounds": 1,
+    "maxTurnsPerAgent": 30,
+    "maxBudgetUsdPerAgent": 1
+  },
+  "workspacesDir": ".hector-workspaces",
+  "loadProjectSettings": true
+}

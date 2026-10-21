@@ -1,0 +1,15 @@
+{
+  "name": "tienda-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "API del carrito de la tienda de ejemplo del tutorial de hector-flow",
+  "scripts": {
+    "start": "node src/server.js",
+    "build": "node scripts/build.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
